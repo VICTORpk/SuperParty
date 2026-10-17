@@ -23,3 +23,4 @@ npx tsx apps/server/scripts/board-smoke.ts                          # partida co
 ```
 
 Para testar a arena sem esperar um encontro por sorte, suba o servidor com `BOARD_DEBUG_ARENA=1 npm run dev:server` (os dois primeiros jogadores vão para a arena 1,5 s após o início do tabuleiro). Não use em produção.
+# SuperParty
