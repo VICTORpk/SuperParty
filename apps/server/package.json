@@ -1,0 +1,21 @@
+{
+  "name": "@jogo/server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "start": "tsx src/index.ts",
+    "typecheck": "tsc -p ."
+  },
+  "dependencies": {
+    "@colyseus/core": "^0.16.26",
+    "@colyseus/ws-transport": "^0.16.5",
+    "@jogo/shared": "*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "colyseus.js": "^0.16.22",
+    "tsx": "^4.20.0"
+  }
+}

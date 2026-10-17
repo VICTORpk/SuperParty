@@ -1,0 +1,16 @@
+{
+  "name": "jogo-social",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": ["packages/*", "apps/*"],
+  "scripts": {
+    "dev:server": "npm run dev -w @jogo/server",
+    "dev:web": "npm run dev -w @jogo/web",
+    "test": "vitest run",
+    "typecheck": "npm run typecheck --workspaces --if-present"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.4"
+  }
+}
