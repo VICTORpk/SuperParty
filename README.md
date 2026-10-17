@@ -28,3 +28,10 @@ Para testar a arena sem esperar um encontro por sorte, suba o servidor com `BOAR
 ## Publicar o front-end no Vercel (Root Directory = `apps/web`)
 O `apps/web/vercel.json` instala as dependências na raiz do monorepo (incluindo as de desenvolvimento, necessárias para o `tsc` e o `vite`) e publica `apps/web/dist`.
 Defina a variável de ambiente **`VITE_SERVER_URL`** no projeto do Vercel com o endereço do servidor de jogo (`wss://...`). O servidor (Colyseus, WebSocket) **não roda no Vercel**: hospede-o à parte (por exemplo, Render).
+
+## Publicar o servidor no Render (gratuito)
+1. No Render: **New → Blueprint**, conecte este repositório do GitHub e confirme (o `render.yaml` na raiz descreve o serviço `superparty-server`, plano `free`, região `virginia`, health check em `/health`).
+2. Quando o deploy terminar, copie a URL do serviço (ex.: `https://superparty-server.onrender.com`).
+3. No Vercel, defina `VITE_SERVER_URL=wss://superparty-server.onrender.com` (troque `https` por `wss`) e faça um novo deploy do front-end.
+4. O plano gratuito hiberna após ~15 min sem uso. O site "acorda" o servidor antes de conectar e avisa o jogador (pode levar até ~1 minuto no primeiro acesso).
+Obs.: as salas ficam só na memória do servidor; se ele reiniciar ou hibernar, as salas ativas se perdem.

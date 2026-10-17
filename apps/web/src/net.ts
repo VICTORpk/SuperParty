@@ -4,6 +4,28 @@ import { normalizeRoomCode, type JoinOptions } from "@jogo/shared";
 const SERVER_URL = import.meta.env.VITE_SERVER_URL ?? "ws://localhost:2567";
 const TOKEN_KEY = "jogo:reconnect";
 const client = new Client(SERVER_URL);
+const HTTP_URL = SERVER_URL.replace(/^ws/, "http");
+
+/**
+ * Acorda o servidor antes de conectar. No plano gratuito do Render ele hiberna e o primeiro acesso demora
+ * cerca de 1 minuto; `onSlow` é chamado se a resposta não vier em ~2,5 s, para a tela avisar o jogador.
+ */
+export async function wakeServer(onSlow: () => void, maxMs = 100_000): Promise<void> {
+  const start = Date.now();
+  let notified = false;
+  for (;;) {
+    try {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 4000);
+      const res = await fetch(`${HTTP_URL}/health`, { signal: ctrl.signal });
+      clearTimeout(timer);
+      if (res.ok) return;
+    } catch { /* ainda acordando */ }
+    if (!notified && Date.now() - start > 2500) { notified = true; onSlow(); }
+    if (Date.now() - start > maxMs) throw new Error("O servidor não respondeu. Tente novamente em instantes.");
+    await new Promise((r) => setTimeout(r, 2000));
+  }
+}
 
 export type Session = Room;
 

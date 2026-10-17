@@ -1,0 +1,14 @@
+# Blueprint do Render para o servidor de jogo (Colyseus). Render → New → Blueprint → escolha este repositório.
+services:
+  - type: web
+    name: superparty-server
+    runtime: node
+    plan: free            # hiberna após ~15 min sem uso; o primeiro acesso demora ~1 min
+    region: virginia      # a mais próxima do Brasil entre as regiões do Render
+    buildCommand: npm install --include=dev
+    startCommand: npm run start -w @jogo/server
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: NODE_VERSION
+        value: 22.12.0

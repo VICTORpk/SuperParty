@@ -1,7 +1,7 @@
 import { useState } from "react";
 import type { Room } from "colyseus.js";
 import { AVATAR_COLORS, MAX_NICK_LENGTH, ROOM_CODE_LENGTH, sanitizeNick } from "@jogo/shared";
-import { createRoom, joinRoom } from "./net";
+import { createRoom, joinRoom, wakeServer } from "./net";
 import { enterLandscape } from "./platform";
 
 function load(key: string, fallback: string) {
@@ -17,6 +17,7 @@ export function Home({ onEnter, notice }: { onEnter: (r: Room) => void; notice: 
   const [code, setCode] = useState("");
   const [error, setError] = useState(notice);
   const [busy, setBusy] = useState(false);
+  const [status, setStatus] = useState("");
 
   async function run(action: () => Promise<Room>) {
     void enterLandscape(); // celular: tela cheia e deitada (precisa ser no gesto do clique)
@@ -27,11 +28,14 @@ export function Home({ onEnter, notice }: { onEnter: (r: Room) => void; notice: 
     setBusy(true);
     setError("");
     try {
+      await wakeServer(() => setStatus("Acordando o servidor (plano gratuito)… pode levar até 1 minuto."));
+      setStatus("");
       onEnter(await action());
     } catch (e) {
       setError(e instanceof Error ? e.message : "Erro inesperado.");
     } finally {
       setBusy(false);
+      setStatus("");
     }
   }
 
@@ -66,6 +70,7 @@ export function Home({ onEnter, notice }: { onEnter: (r: Room) => void; notice: 
           <button type="submit" disabled={busy}>Entrar</button>
         </form>
 
+        {status && <p className="muted" role="status">{status}</p>}
         {error && <p className="error" role="alert">{error}</p>}
       </div>
     </main>
