@@ -24,3 +24,7 @@ npx tsx apps/server/scripts/board-smoke.ts                          # partida co
 
 Para testar a arena sem esperar um encontro por sorte, suba o servidor com `BOARD_DEBUG_ARENA=1 npm run dev:server` (os dois primeiros jogadores vão para a arena 1,5 s após o início do tabuleiro). Não use em produção.
 # SuperParty
+
+## Publicar o front-end no Vercel (Root Directory = `apps/web`)
+O `apps/web/vercel.json` instala as dependências na raiz do monorepo (incluindo as de desenvolvimento, necessárias para o `tsc` e o `vite`) e publica `apps/web/dist`.
+Defina a variável de ambiente **`VITE_SERVER_URL`** no projeto do Vercel com o endereço do servidor de jogo (`wss://...`). O servidor (Colyseus, WebSocket) **não roda no Vercel**: hospede-o à parte (por exemplo, Render).
