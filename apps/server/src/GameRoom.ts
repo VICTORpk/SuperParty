@@ -2,12 +2,13 @@ import { Client, Room, matchMaker } from "@colyseus/core";
 import { BoardGame } from "./BoardGame";
 import { PoolGame } from "./PoolGame";
 import { ImpostorGame } from "./ImpostorGame";
+import { isDevEnabled } from "./dev";
 import {
-  BOARD_RULES, C, CHAT_HISTORY_SIZE, EMOTE_COOLDOWN_MS, POSITIONS_BROADCAST_MS, CHAT_MIN_INTERVAL_MS, EMPTY_ROOM_TTL_MS, LOBBY_ATTACK_COOLDOWN_MS,
+  AVATAR_COLORS, BOARD_RULES, BOT_CONFIG, C, CHAT_HISTORY_SIZE, DEFAULT_BOARD_SIZE, EMOTE_COOLDOWN_MS, POSITIONS_BROADCAST_MS, CHAT_MIN_INTERVAL_MS, EMPTY_ROOM_TTL_MS, LOBBY_ATTACK_COOLDOWN_MS,
   MAX_PLAYERS, QUEUE_COUNTDOWN_MS, RECONNECT_WINDOW_S, S, GAMES, GAME_IDS, STATION_LEAVE_RADIUS, STATION_RADIUS_SERVER,
-  generateRoomCode, isEmote, isGameId, sanitizeAngle, sanitizeChat, sanitizeHeight, sanitizeColor, sanitizeNick, spawnPoint, stepMove, validateDodge,
+  generateRoomCode, newBot, nearestTarget, resolveCollisions, stepBot, isBoardSize, isEmote, isGameId, sanitizeAngle, sanitizeChat, sanitizeHeight, sanitizeColor, sanitizeNick, spawnPoint, stepMove, validateDodge,
   type AttackPayload, type ChatMessage, type DodgePayload, type EmotePayload, type GameId, type PhasePayload, type JoinOptions, type PlayerInfo,
-  type PlayerPos, type QueueState, type WelcomePayload,
+  type BotState, type PlayerPos, type QueueState, type WelcomePayload,
 } from "@jogo/shared";
 
 interface Member {
@@ -25,6 +26,8 @@ interface Member {
   lastDodgeAt: number;
   lastEmoteAt: number;
   lastAttackAt: number;
+  /** Só bots de teste (DEV_MODE): estado do comportamento. */
+  bot?: BotState;
 }
 
 export class GameRoom extends Room {
@@ -36,6 +39,8 @@ export class GameRoom extends Room {
   /** Partida em andamento (só uma por sala); só quem está na lista de jogadores vê a partida. */
   private active: { id: GameId; game: BoardGame | PoolGame | ImpostorGame; players: Set<string> } | null = null;
   private queues = new Map<GameId, Set<string>>(GAME_IDS.map((g) => [g, new Set<string>()]));
+  /** Voto de tamanho do tabuleiro de cada jogador da fila (id → nº de casas). */
+  private boardVotes = new Map<string, number>();
   private countdowns = new Map<GameId, { timer: NodeJS.Timeout; startsAt: number }>();
   private returnTimer: NodeJS.Timeout | null = null;
   private history: ChatMessage[] = [];
@@ -44,6 +49,9 @@ export class GameRoom extends Room {
   private code = "";
   private spawnCounter = 0;
   private dirty = false;
+  /** Ferramentas de teste (bots): só com DEV_MODE=1 e fora de produção; ver `dev.ts`. */
+  private dev = isDevEnabled();
+  private botSeq = 0;
 
   async onCreate() {
     this.code = await this.reserveCode();
@@ -52,6 +60,12 @@ export class GameRoom extends Room {
     // O cliente só registra seus handlers depois de entrar; por isso ele pede o estado inicial.
     this.onMessage(C.Hello, (client) => this.sendWelcome(client));
     this.onMessage(C.JoinQueue, (client, raw: unknown) => this.handleJoinQueue(client, raw));
+    this.onMessage(C.BoardSize, (client, raw: unknown) => {
+      const size = typeof raw === "object" && raw ? (raw as { size?: unknown }).size : raw;
+      if (!isBoardSize(size) || !this.queues.get("board")!.has(client.sessionId)) return;
+      this.boardVotes.set(client.sessionId, size);
+      this.broadcastQueue();
+    });
     this.onMessage(C.LeaveQueue, (client) => this.removeFromQueues(client.sessionId));
     this.onMessage(C.EndGame, (client) => {
       if (this.active?.players.has(client.sessionId) && this.active.game.finished) this.endGame();
@@ -69,6 +83,12 @@ export class GameRoom extends Room {
     this.onMessage(C.Move, (client, raw: unknown) => this.handleMove(client, raw));
     this.onMessage(C.Dodge, (client, raw: unknown) => this.handleDodge(client, raw));
     this.onMessage(C.Emote, (client, raw: unknown) => this.handleEmote(client, raw));
+    if (this.dev) {
+      this.onMessage(C.DevAddBot, (client) => this.addBot(client));
+      this.onMessage(C.DevRemoveBot, (client) => this.removeBot(client));
+      this.clock.setInterval(() => this.tickBots(), POSITIONS_BROADCAST_MS);
+      console.log(`[sala ${this.code}] modo de desenvolvimento: bots habilitados`);
+    }
     this.clock.setInterval(() => this.flushPositions(), POSITIONS_BROADCAST_MS);
     this.scheduleEmptyDispose();
     console.log(`[sala ${this.code}] criada`);
@@ -160,7 +180,7 @@ export class GameRoom extends Room {
   private queueState(): QueueState {
     const games = {} as QueueState["games"];
     for (const g of GAME_IDS) games[g] = { members: Array.from(this.queues.get(g)!), startsAt: this.countdowns.get(g)?.startsAt ?? null };
-    return { games, busy: this.active?.id ?? null, serverNow: Date.now() };
+    return { games, boardVotes: Object.fromEntries(this.boardVotes), busy: this.active?.id ?? null, serverNow: Date.now() };
   }
 
   private broadcastQueue() {
@@ -188,6 +208,7 @@ export class GameRoom extends Room {
     this.removeFromQueues(m.id, true);
     q.add(m.id);
     this.notice(`${m.nick} entrou na fila de ${def.label} (${q.size}/${def.min}).`);
+    if (this.dev) this.fillQueueWithBots(game);
     this.refreshCountdown(game);
     this.broadcastQueue();
   }
@@ -198,6 +219,8 @@ export class GameRoom extends Room {
       const q = this.queues.get(g)!;
       if (q.delete(id)) {
         changed = true;
+        if (this.dev && !Array.from(q).some((o) => !this.members.get(o)?.bot)) q.clear(); // só sobraram bots: saem da fila
+        if (g === "board") this.boardVotes.delete(id);
         this.refreshCountdown(g);
       }
     }
@@ -226,6 +249,8 @@ export class GameRoom extends Room {
     const def = GAMES[game];
     const players = Array.from(this.queues.get(game)!).filter((id) => this.members.has(id));
     this.queues.get(game)!.clear();
+    const size = game === "board" ? this.pickBoardSize(players) : DEFAULT_BOARD_SIZE;
+    if (game === "board") this.boardVotes.clear();
     if (this.active || players.length < def.min || !def.available) {
       this.broadcastQueue();
       return;
@@ -240,12 +265,25 @@ export class GameRoom extends Room {
     this.active = {
       id: game,
       players: set,
-      game: game === "pool" ? new PoolGame(host, [players[0]!, players[1]!]) : game === "impostor" ? new ImpostorGame(host, players) : new BoardGame(host, players),
+      game: game === "pool" ? new PoolGame(host, players) : game === "impostor" ? new ImpostorGame(host, players) : new BoardGame(host, players, size),
     };
     for (const c of this.clients) if (set.has(c.sessionId)) c.send(S.Phase, this.phaseFor(c.sessionId));
     this.broadcastPlayers();
     this.broadcastQueue();
     this.active.game.start();
+  }
+
+  /** Tamanho mais votado; empate sorteia entre os mais votados; sem votos, usa o tamanho padrão. */
+  private pickBoardSize(players: string[]): number {
+    const tally = new Map<number, number>();
+    for (const id of players) {
+      const v = this.boardVotes.get(id);
+      if (v !== undefined) tally.set(v, (tally.get(v) ?? 0) + 1);
+    }
+    if (tally.size === 0) return DEFAULT_BOARD_SIZE;
+    const top = Math.max(...tally.values());
+    const best = [...tally].filter(([, n]) => n === top).map(([size]) => size);
+    return best[Math.floor(Math.random() * best.length)]!;
   }
 
   /** Vitória ou cancelamento: volta ao lobby automaticamente depois de um tempo (qualquer jogador pode antecipar). */
@@ -294,6 +332,7 @@ export class GameRoom extends Room {
       phase: this.phaseFor(client.sessionId).phase,
       players: this.playerList(),
       history: this.history,
+      dev: this.dev || undefined,
     };
     client.send(S.Welcome, welcome);
     client.send(S.Phase, this.phaseFor(client.sessionId));
@@ -394,12 +433,15 @@ export class GameRoom extends Room {
     if (this.hostId === sessionId) this.hostId = this.oldestMemberId();
     this.broadcastPlayers();
     this.notice(`${member.nick} saiu da sala.`);
-    if (this.members.size === 0) this.scheduleEmptyDispose();
+    if (!this.humanCount()) {
+      for (const id of Array.from(this.members.keys())) this.removeMember(id); // sem humanos, os bots saem junto
+      if (this.members.size === 0) this.scheduleEmptyDispose();
+    }
   }
 
   private oldestMemberId(): string | null {
     let best: Member | null = null;
-    for (const m of this.members.values()) if (!best || m.joinedAt < best.joinedAt) best = m;
+    for (const m of this.members.values()) if (!m.bot && (!best || m.joinedAt < best.joinedAt)) best = m;
     return best?.id ?? null;
   }
 
@@ -416,7 +458,7 @@ export class GameRoom extends Room {
   private playerList(): PlayerInfo[] {
     return Array.from(this.members.values())
       .sort((a, b) => a.joinedAt - b.joinedAt)
-      .map((m) => ({ id: m.id, nick: m.nick, color: m.color, isHost: m.id === this.hostId, away: m.away, inGame: this.active?.players.has(m.id) ?? false }));
+      .map((m) => ({ id: m.id, nick: m.nick, color: m.color, isHost: m.id === this.hostId, away: m.bot ? false : m.away, inGame: this.active?.players.has(m.id) ?? false, bot: m.bot ? true : undefined }));
   }
 
   private broadcastPlayers() {
@@ -425,6 +467,72 @@ export class GameRoom extends Room {
 
   private notice(text: string) {
     this.broadcast(S.Notice, text);
+  }
+
+  // ---- bots de teste (só em desenvolvimento) ----
+  private humanCount(): number {
+    let n = 0;
+    for (const m of this.members.values()) if (!m.bot) n++;
+    return n;
+  }
+
+  private botIds(): string[] {
+    return Array.from(this.members.values()).filter((m) => m.bot).map((m) => m.id);
+  }
+
+  private addBot(client: Client) {
+    if (!this.dev || !this.members.has(client.sessionId)) return;
+    if (this.botIds().length >= BOT_CONFIG.maxBots || this.members.size >= MAX_PLAYERS) {
+      return void client.send(S.Notice, `Limite de bots atingido (${BOT_CONFIG.maxBots} bots ou ${MAX_PLAYERS} jogadores).`);
+    }
+    const n = ++this.botSeq;
+    const id = `bot-${n}`;
+    const spawn = spawnPoint(this.spawnCounter++);
+    const bot = newBot(spawn.x, spawn.z);
+    this.members.set(id, {
+      id, nick: this.uniqueNick(`Bot ${n}`), color: AVATAR_COLORS[(n + 4) % AVATAR_COLORS.length]!, joinedAt: Date.now(),
+      away: true, // "ausente": nas partidas o servidor joga por ele (rola o dado, passa a vez)
+      lastChatAt: 0, x: spawn.x, z: spawn.z, ry: 0, y: 0, lastMoveAt: Date.now(), lastDodgeAt: 0, lastEmoteAt: 0, lastAttackAt: 0, bot,
+    });
+    this.dirty = true;
+    this.broadcastPlayers();
+    this.notice(`${this.members.get(id)!.nick} (bot de teste) entrou na sala.`);
+  }
+
+  private removeBot(client: Client) {
+    if (!this.dev || !this.members.has(client.sessionId)) return;
+    const ids = this.botIds();
+    const last = ids[ids.length - 1];
+    if (last) this.removeMember(last);
+  }
+
+  /** Bots fora de partida andam até o humano mais próximo e acenam quando chegam perto. */
+  private tickBots() {
+    const bots = this.botIds();
+    if (!bots.length) return;
+    const now = Date.now();
+    const humans = Array.from(this.members.values()).filter((m) => !m.bot && !this.active?.players.has(m.id)).map((m) => ({ x: m.x, z: m.z }));
+    for (const id of bots) {
+      const m = this.members.get(id)!;
+      if (!m.bot || this.active?.players.has(id)) continue;
+      const dt = now - m.lastMoveAt;
+      m.lastMoveAt = now;
+      const { wave } = stepBot(m.bot, nearestTarget(m.x, m.z, humans), dt, now, Math.random, resolveCollisions);
+      if (m.x !== m.bot.x || m.z !== m.bot.z) this.dirty = true;
+      m.x = m.bot.x; m.z = m.bot.z; m.ry = m.bot.ry;
+      if (wave) this.broadcast(S.Emote, { id, emote: "wave" } satisfies EmotePayload);
+    }
+  }
+
+  /** Bots entram na fila junto com o humano (até a capacidade do jogo) para testar partidas completas. */
+  private fillQueueWithBots(game: GameId) {
+    const q = this.queues.get(game)!;
+    const def = GAMES[game];
+    for (const id of this.botIds()) {
+      if (q.size >= def.max) break;
+      if (Array.from(this.queues.values()).some((other) => other.has(id))) continue;
+      q.add(id);
+    }
   }
 
   // ---- ciclo de vida ----

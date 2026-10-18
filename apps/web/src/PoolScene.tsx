@@ -131,48 +131,43 @@ function Cabin() {
   );
 }
 
+/** Mesa em estilo "low poly" de cores chapadas: feltro verde, tabelas claras, caçapas escuras nos cantos e pés laranja. */
+const TABLE = { felt: "#3fa655", cushion: "#2f8a43", rail: "#f2b685", apron: "#f47c3a", leg: "#f9863f", cap: "#26273a", hole: "#4a2c1a" };
+
 function PoolTable() {
-  const felt = useMemo(() => {
-    const c = document.createElement("canvas");
-    c.width = c.height = 256;
-    const g = c.getContext("2d")!;
-    const grad = g.createRadialGradient(128, 128, 20, 128, 128, 190);
-    grad.addColorStop(0, "#2a9d5c"); grad.addColorStop(1, "#1b7a45");
-    g.fillStyle = grad; g.fillRect(0, 0, 256, 256);
-    const r = seeded(4);
-    for (let i = 0; i < 1500; i++) { g.fillStyle = `rgba(255,255,255,${r() * 0.04})`; g.fillRect(r() * 256, r() * 256, 1, 1); }
-    const t = new THREE.CanvasTexture(c);
-    t.colorSpace = THREE.SRGBColorSpace;
-    return t;
-  }, []);
-  useEffect(() => () => felt.dispose(), [felt]);
   const { halfW: W, halfD: D } = POOL;
+  const capY = 0.12;
   return (
     <group>
-      <mesh rotation-x={-Math.PI / 2} position={[0, 0, 0]}><planeGeometry args={[W * 2 + 0.6, D * 2 + 0.6]} /><meshStandardMaterial map={felt} roughness={1} /></mesh>
+      <mesh rotation-x={-Math.PI / 2} position={[0, 0, 0]}><planeGeometry args={[W * 2 + 0.6, D * 2 + 0.6]} /><Flat color={TABLE.felt} /></mesh>
       {/* marcas: linha da cabeceira e pontos */}
-      <mesh rotation-x={-Math.PI / 2} position={[POOL.head.x, 0.003, 0]}><planeGeometry args={[0.03, D * 2 - 0.3]} /><meshBasicMaterial color="#ffffff" transparent opacity={0.22} /></mesh>
-      {[POOL.head.x, POOL.foot.x].map((x) => <mesh key={x} rotation-x={-Math.PI / 2} position={[x, 0.004, 0]}><circleGeometry args={[0.05, 10]} /><meshBasicMaterial color="#ffffff" transparent opacity={0.4} /></mesh>)}
-      {/* madeira ao redor */}
-      {[-1, 1].map((s) => <mesh key={`z${s}`} position={[0, 0.05, s * (D + 0.6)]}><boxGeometry args={[W * 2 + 2.4, 0.5, 0.9]} /><Flat color="#7a4a22" /></mesh>)}
-      {[-1, 1].map((s) => <mesh key={`x${s}`} position={[s * (W + 0.6), 0.05, 0]}><boxGeometry args={[0.9, 0.5, D * 2 + 0.6]} /><Flat color="#7a4a22" /></mesh>)}
+      <mesh rotation-x={-Math.PI / 2} position={[POOL.head.x, 0.003, 0]}><planeGeometry args={[0.03, D * 2 - 0.3]} /><meshBasicMaterial color="#ffffff" transparent opacity={0.28} /></mesh>
+      {[POOL.head.x, POOL.foot.x].map((x) => <mesh key={x} rotation-x={-Math.PI / 2} position={[x, 0.004, 0]}><circleGeometry args={[0.05, 10]} /><meshBasicMaterial color="#ffffff" transparent opacity={0.5} /></mesh>)}
+      {/* bordas de madeira clara */}
+      {[-1, 1].map((s) => <mesh key={`z${s}`} position={[0, 0.05, s * (D + 0.6)]}><boxGeometry args={[W * 2 + 2.4, 0.5, 0.9]} /><Flat color={TABLE.rail} /></mesh>)}
+      {[-1, 1].map((s) => <mesh key={`x${s}`} position={[s * (W + 0.6), 0.05, 0]}><boxGeometry args={[0.9, 0.5, D * 2 + 0.6]} /><Flat color={TABLE.rail} /></mesh>)}
       {/* almofadas (tabelas) com vão nas caçapas */}
       {[-1, 1].flatMap((s) => [-1, 1].map((h) => (
-        <mesh key={`c${s}${h}`} position={[h * (W / 2 + 0.25), 0.16, s * (D + 0.13)]}><boxGeometry args={[W - 0.6, 0.26, 0.28]} /><Flat color="#1d6b3f" /></mesh>
+        <mesh key={`c${s}${h}`} position={[h * (W / 2 + 0.25), 0.16, s * (D + 0.13)]}><boxGeometry args={[W - 0.6, 0.26, 0.28]} /><Flat color={TABLE.cushion} /></mesh>
       )))}
-      {[-1, 1].map((s) => <mesh key={`e${s}`} position={[s * (W + 0.13), 0.16, 0]}><boxGeometry args={[0.28, 0.26, D * 2 - 0.9]} /><Flat color="#1d6b3f" /></mesh>)}
-      {/* caçapas */}
+      {[-1, 1].map((s) => <mesh key={`e${s}`} position={[s * (W + 0.13), 0.16, 0]}><boxGeometry args={[0.28, 0.26, D * 2 - 0.9]} /><Flat color={TABLE.cushion} /></mesh>)}
+      {/* caçapas: boca marrom no feltro e fundo escuro */}
       {POCKETS.map((p, i) => (
-        <group key={i} position={[p.x * 1.0, 0, p.z * 1.0]}>
-          <mesh position={[0, 0.006, 0]} rotation-x={-Math.PI / 2}><circleGeometry args={[p.r + 0.04, 18]} /><meshBasicMaterial color="#0b0b0b" /></mesh>
-          <mesh position={[0, -0.3, 0]}><cylinderGeometry args={[p.r, p.r * 0.8, 0.6, 14]} /><meshBasicMaterial color="#050505" /></mesh>
+        <group key={i} position={[p.x, 0, p.z]}>
+          <mesh position={[0, 0.006, 0]} rotation-x={-Math.PI / 2}><circleGeometry args={[p.r + 0.04, 14]} /><meshBasicMaterial color={TABLE.hole} /></mesh>
+          <mesh position={[0, -0.3, 0]}><cylinderGeometry args={[p.r, p.r * 0.8, 0.6, 14]} /><meshBasicMaterial color="#120b07" /></mesh>
         </group>
       ))}
-      {/* pernas */}
+      {/* blocos escuros nos cantos e nas laterais, sobre as caçapas */}
       {[-1, 1].flatMap((sx) => [-1, 1].map((sz) => (
-        <mesh key={`l${sx}${sz}`} position={[sx * (W - 0.3), -1.3, sz * (D - 0.1)]}><boxGeometry args={[0.7, 2.6, 0.7]} /><Flat color="#6b4423" /></mesh>
+        <mesh key={`k${sx}${sz}`} position={[sx * (W + 0.5), capY, sz * (D + 0.5)]} rotation-y={Math.PI / 4}><boxGeometry args={[1.05, 0.62, 1.05]} /><Flat color={TABLE.cap} /></mesh>
       )))}
-      <mesh position={[0, -0.6, 0]}><boxGeometry args={[W * 2 - 0.4, 0.2, D * 2 - 0.2]} /><Flat color="#5a3a1c" /></mesh>
+      {[-1, 1].map((sz) => <mesh key={`m${sz}`} position={[0, capY, sz * (D + 0.58)]}><boxGeometry args={[0.9, 0.62, 0.8]} /><Flat color={TABLE.cap} /></mesh>)}
+      {/* saia e pés laranja afunilados */}
+      <mesh position={[0, -0.42, 0]}><boxGeometry args={[W * 2 + 2.1, 0.5, D * 2 + 1.5]} /><Flat color={TABLE.apron} /></mesh>
+      {[-1, 1].flatMap((sx) => [-1, 1].map((sz) => (
+        <mesh key={`l${sx}${sz}`} position={[sx * (W - 0.1), -1.55, sz * (D - 0.05)]} rotation-y={Math.PI / 4}><cylinderGeometry args={[0.62, 0.42, 2.1, 4]} /><Flat color={TABLE.leg} /></mesh>
+      )))}
     </group>
   );
 }

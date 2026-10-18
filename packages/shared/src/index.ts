@@ -10,3 +10,6 @@ export * from "./arena";
 export * from "./pool";
 export * from "./poolRules";
 export * from "./impostor";
+export * from "./lobbyWorld";
+export * from "./botBrain";
+export * from "./maps";

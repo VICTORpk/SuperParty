@@ -11,8 +11,8 @@ import {
 import { isDown, type Settings } from "./controls";
 import { INK_COLOR, getGradient } from "./toon";
 import type { TouchState } from "./platform";
-import { Bridge, Clouds, FacetedWater, Flat, Hut, Island, PALETTE, Pine, Rock } from "./scenery";
-import { BRIDGE, FLOWERS, HUT, PINES, POND, POND_ROCKS, ROCKS, resolveCollisions } from "./lobbyLayout";
+import { Bridge, Clouds, FacetedWater, Flat, Hut, Island, PALETTE, Pine } from "./scenery";
+import { BRIDGE, FLOWERS, HUT, PINES, POND, resolveCollisions } from "./lobbyLayout";
 
 export type CameraMode = "first" | "third";
 export interface Bubble { text: string }
@@ -961,7 +961,6 @@ function World({ queue }: { queue: QueueState | null }) {
       {/* lago central com ponte (só dá para atravessar pela ponte) */}
       <mesh position={[0, 0.04, 0]} rotation-x={-Math.PI / 2}><circleGeometry args={[POND.radius + 0.5, 10]} /><Flat color={PALETTE.sand} /></mesh>
       <FacetedWater width={POND.radius * 2 - 0.4} depth={POND.radius * 2 - 0.4} round position={[0, 0.07, 0]} />
-      {POND_ROCKS.map((p, i) => <Rock key={i} position={[p.x, 0.15, p.z]} scale={0.8 + p.k * 0.5} seed={p.seed} color={PALETTE.rock[i % 3]} />)}
       <Bridge position={[0, 0.24, 0]} length={BRIDGE.halfLength * 2 - 1} width={BRIDGE.halfWidth * 2 - 0.1} />
 
       {/* casinha ao fundo, em escala compatível com os personagens (porta mais alta que eles) */}
@@ -988,7 +987,6 @@ function World({ queue }: { queue: QueueState | null }) {
       </Station>
 
       {PINES.map((p, i) => <Pine key={i} position={[p.x, 0, p.z]} scale={p.scale} color={p.color} tiers={p.tiers} />)}
-      {ROCKS.map((p, i) => <Rock key={i} position={[p.x, 0.15, p.z]} scale={p.scale} seed={p.seed} color={p.color} />)}
       {FLOWERS.map((p, i) => (
         <group key={i} position={[p.x, 0, p.z]}>
           <mesh position={[0, 0.2, 0]}><cylinderGeometry args={[0.025, 0.03, 0.4, 5]} /><Flat color="#3fae3a" /></mesh>
@@ -1001,7 +999,6 @@ function World({ queue }: { queue: QueueState | null }) {
         <group key={i} position={[it.x, it.y, it.z]}>
           <Island radius={it.r} top={PALETTE.grass[i % 3]} />
           <Pine position={[0.4, 0, 0.2]} scale={1.3 + (i % 2) * 0.5} color={PALETTE.pine[i % 3]} />
-          {i % 2 === 0 && <Rock position={[-it.r * 0.4, 0.3, it.r * 0.2]} scale={1.3} seed={i + 3} />}
         </group>
       ))}
       <Clouds count={9} radius={58} />

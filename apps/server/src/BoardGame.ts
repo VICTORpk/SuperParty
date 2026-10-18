@@ -1,9 +1,9 @@
 import { randomInt } from "node:crypto";
 import { ArenaBattle } from "./ArenaBattle";
 import {
-  BOARD_RULES, CHALLENGE_CONFIG, CHALLENGE_KINDS, FINAL_TILE, S,
-  clampTile, clicksSuccess, colorsCheck, isChallengeTile, pickColors, powerSuccess, shuffle, tilePath,
-  type BoardEvent, type BoardPhase, type BoardPublicState, type ChallengeInput, type ChallengePublic, type ChallengeResult,
+  BOARD_RULES, CHALLENGE_CONFIG, CHALLENGE_KINDS, DEFAULT_BOARD_SIZE, RED_TILE_BACK, S,
+  clampTile, clicksSuccess, colorsCheck, isChallengeTile, isRedTile, makeBoardLayout, pickColors, powerSuccess, shortcutFrom, shuffle,
+  type BoardLayout, type BoardEvent, type BoardPhase, type BoardPublicState, type ChallengeInput, type ChallengePublic, type ChallengeResult,
 } from "@jogo/shared";
 
 export interface BoardHost {
@@ -37,7 +37,12 @@ export class BoardGame {
   private arena: ArenaBattle | null = null;
   private duel: [string, string] | null = null;
 
-  constructor(private host: BoardHost, playerIds: string[]) {
+  private layout: BoardLayout;
+  private seed: number;
+
+  constructor(private host: BoardHost, playerIds: string[], private size: number = DEFAULT_BOARD_SIZE) {
+    this.seed = randomInt(1, 2 ** 31);
+    this.layout = makeBoardLayout(size, this.seed);
     this.order = shuffle(playerIds, rng); // a ordem dos turnos é sorteada pelo sistema
     for (const id of this.order) this.positions.set(id, 0);
   }
@@ -76,6 +81,8 @@ export class BoardGame {
       challenge: this.challenge,
       winner: this.winner,
       duel: this.duel,
+      size: this.size,
+      seed: this.seed,
       serverNow: Date.now(),
     };
   }
@@ -144,13 +151,13 @@ export class BoardGame {
       if (wasTurn) this.turnIndex = this.turnIndex % this.order.length;
       const from = this.positions.get(duelOther);
       if (from === undefined) return wasTurn ? this.beginTurn() : this.nextTurn();
-      const to = clampTile(from + BOARD_RULES.encounterWinnerAdvance);
+      const to = this.clampT(from + BOARD_RULES.encounterWinnerAdvance);
       this.positions.set(duelOther, to);
       this.phase = "moving";
       this.emit({ kind: "move", playerId: duelOther, from, to, reason: "arena-win" });
       this.emitState();
       this.later(this.travelMs(from, to) + 700, () => {
-        if (to >= FINAL_TILE) this.finish(duelOther);
+        if (to >= this.layout.finalTile) this.finish(duelOther);
         else if (wasTurn) this.beginTurn();
         else this.nextTurn();
       });
@@ -195,7 +202,7 @@ export class BoardGame {
     const id = this.turn;
     const value = randomInt(1, BOARD_RULES.diceSides + 1);
     const from = this.positions.get(id)!;
-    const to = clampTile(from + value);
+    const to = this.clampT(from + value);
     this.phase = "rolling"; // o dado gira; a peça só anda quando ele parar
     this.turnEndsAt = null;
     this.emit({ kind: "roll", playerId: id, value, from, to });
@@ -208,21 +215,53 @@ export class BoardGame {
     });
   }
 
+  private clampT(i: number): number {
+    return clampTile(i, this.layout.finalTile);
+  }
+
   private travelMs(from: number, to: number): number {
     return Math.abs(to - from) * BOARD_RULES.hopMs;
   }
 
   private afterDiceMove(id: string) {
+    this.resolveLanding(id, "dice");
+  }
+
+  /**
+   * Efeitos da casa onde a peça parou. `via` evita encadear efeitos: depois de um atalho não há outro atalho,
+   * e depois da punição da casa vermelha só vale o encontro.
+   */
+  private resolveLanding(id: string, via: "dice" | "shortcut" | "penalty") {
     const pos = this.positions.get(id);
     if (pos === undefined) return;
-    if (pos >= FINAL_TILE) return this.finish(id);
+    if (pos >= this.layout.finalTile) return this.finish(id);
 
     // Encontro: terminou o movimento em casa ocupada (a casa de início não conta)
     const other = pos > 0 ? this.order.find((o) => o !== id && this.positions.get(o) === pos) : undefined;
     if (other) return this.startEncounter(id, other, pos);
+    if (via === "penalty") return this.nextTurn();
 
-    if (isChallengeTile(pos)) return this.startChallenge(id);
+    const sc = via === "dice" ? shortcutFrom(this.layout, pos) : undefined;
+    if (sc) {
+      return this.later(BOARD_RULES.shortcutPauseMs, () => this.moveTo(id, sc.to, "shortcut", () => this.resolveLanding(id, "shortcut")));
+    }
+    if (isRedTile(this.layout, pos)) {
+      return this.later(BOARD_RULES.shortcutPauseMs, () => this.moveTo(id, this.clampT(pos - RED_TILE_BACK), "red-tile", () => this.resolveLanding(id, "penalty")));
+    }
+    if (isChallengeTile(this.layout, pos)) return this.startChallenge(id);
     this.nextTurn();
+  }
+
+  /** Move a peça (atalho ou casa vermelha), espera a animação e segue. */
+  private moveTo(id: string, to: number, reason: "shortcut" | "red-tile", then: () => void) {
+    const from = this.positions.get(id);
+    if (from === undefined) return;
+    this.positions.set(id, to);
+    this.phase = "moving";
+    this.emit({ kind: "move", playerId: id, from, to, reason });
+    this.emitState();
+    const travel = reason === "shortcut" ? BOARD_RULES.shortcutFlightMs : this.travelMs(from, to);
+    this.later(travel + 600, then);
   }
 
   // ---------------------------------------------------------------- encontro → arena
@@ -255,20 +294,20 @@ export class BoardGame {
     let travel = 0;
     let wTo = wFrom ?? 0;
     if (wFrom !== undefined) {
-      wTo = clampTile(wFrom + BOARD_RULES.encounterWinnerAdvance);
+      wTo = this.clampT(wFrom + BOARD_RULES.encounterWinnerAdvance);
       this.positions.set(winner, wTo);
       this.emit({ kind: "move", playerId: winner, from: wFrom, to: wTo, reason: "arena-win" });
       travel = Math.max(travel, this.travelMs(wFrom, wTo));
     }
     if (lFrom !== undefined) {
-      const lTo = clampTile(lFrom - BOARD_RULES.encounterLoserBack);
+      const lTo = this.clampT(lFrom - BOARD_RULES.encounterLoserBack);
       this.positions.set(loser, lTo);
       this.emit({ kind: "move", playerId: loser, from: lFrom, to: lTo, reason: "arena-loss" });
       travel = Math.max(travel, this.travelMs(lFrom, lTo));
     }
     this.emitState();
     this.later(travel + 700, () => {
-      if (wTo >= FINAL_TILE && this.positions.has(winner)) this.finish(winner);
+      if (wTo >= this.layout.finalTile && this.positions.has(winner)) this.finish(winner);
       else this.nextTurn();
     });
   }
@@ -328,14 +367,14 @@ export class BoardGame {
       if (from === undefined) return;
       // Sucesso: permanece na casa do desafio e avança mais 2. Falha: avança apenas 1 (configurável).
       const steps = success ? BOARD_RULES.successBonus : BOARD_RULES.failAdvance;
-      const to = clampTile(from + steps);
+      const to = this.clampT(from + steps);
       this.positions.set(id, to);
       this.challenge = null;
       this.phase = "moving";
       this.emit({ kind: "move", playerId: id, from, to, reason: success ? "challenge-success" : "challenge-fail" });
       this.emitState();
       this.later(this.travelMs(from, to) + 600, () => {
-        if (to >= FINAL_TILE) this.finish(id);
+        if (to >= this.layout.finalTile) this.finish(id);
         else this.nextTurn();
       });
     });

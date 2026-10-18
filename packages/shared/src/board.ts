@@ -1,8 +1,99 @@
 /** Regras puras do tabuleiro (usadas pelo servidor autoritativo e testadas isoladamente). */
 
-export const BOARD_LENGTH = 40; // casas 0..39 (0 = início, 39 = final)
-export const FINAL_TILE = BOARD_LENGTH - 1;
-export const CHALLENGE_TILES: readonly number[] = [3, 7, 10, 14, 18, 21, 25, 29, 33, 36];
+/** Tamanhos que os jogadores podem escolher (número de casas, contando início e chegada). */
+export const BOARD_SIZES = [40, 70, 100, 150] as const;
+export const DEFAULT_BOARD_SIZE = 40;
+export function isBoardSize(v: unknown): v is number {
+  return typeof v === "number" && (BOARD_SIZES as readonly number[]).includes(v);
+}
+/** Quem cai numa casa vermelha volta esta quantidade de casas. */
+export const RED_TILE_BACK = 2;
+
+export interface Shortcut { from: number; to: number }
+
+/** Distribuição das casas especiais; sai igual no servidor e nos clientes a partir de (tamanho, semente). */
+export interface BoardLayout {
+  length: number;
+  finalTile: number;
+  challengeTiles: number[];
+  redTiles: number[];
+  /** Cair na casa `from` leva direto para `to` (sempre adiante; o último chega perto da linha de chegada). */
+  shortcuts: Shortcut[];
+}
+
+function mulberry32(seed: number): () => number {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+export function makeBoardLayout(length: number, seed: number): BoardLayout {
+  const rnd = mulberry32(seed);
+  const int = (lo: number, hi: number) => lo + Math.floor(rnd() * (hi - lo + 1)); // inclusivo
+  const finalTile = length - 1;
+  const used = new Set<number>([0, finalTile]);
+  const near = (t: number, gap: number) => { for (let d = -gap; d <= gap; d++) if (used.has(t + d)) return true; return false; };
+
+  // atalhos: um por trecho do percurso e o último salta quase até a chegada
+  const shortcuts: Shortcut[] = [];
+  const count = Math.max(2, Math.round(length / 22));
+  const lastFrom = Math.round(finalTile * (0.55 + rnd() * 0.1));
+  const zoneLen = (lastFrom - 8) / Math.max(1, count - 1);
+  for (let k = 0; k < count - 1; k++) {
+    const lo = Math.round(5 + k * zoneLen), hi = Math.round(5 + k * zoneLen + zoneLen * 0.55);
+    const from = int(lo, Math.max(lo, hi));
+    const jump = int(Math.max(5, Math.round(length * 0.07)), Math.max(7, Math.round(length * 0.16)));
+    const to = Math.min(from + jump, lastFrom - 4);
+    if (to - from < 4 || near(from, 2) || near(to, 2)) continue;
+    shortcuts.push({ from, to }); used.add(from); used.add(to);
+  }
+  const lastTo = finalTile - 3;
+  if (!near(lastFrom, 2) && lastTo - lastFrom >= 5) { shortcuts.push({ from: lastFrom, to: lastTo }); used.add(lastFrom); used.add(lastTo); }
+  shortcuts.sort((a, b) => a.from - b.from);
+
+  // casas vermelhas: afastadas entre si e dos atalhos (a casa 2 atrás nunca é outra casa especial)
+  const reds: number[] = [];
+  const wantRed = Math.round(length * 0.12);
+  for (let tries = 0; reds.length < wantRed && tries < wantRed * 60; tries++) {
+    const t = int(4, finalTile - 2);
+    if (near(t, 2) || near(t - RED_TILE_BACK, 0)) continue;
+    reds.push(t); used.add(t);
+  }
+  reds.sort((a, b) => a - b);
+
+  // desafios: espalhados de forma regular, com um pequeno sorteio de posição
+  const challenges: number[] = [];
+  const wantCh = Math.round(length / 4);
+  for (let k = 1; k <= wantCh; k++) {
+    const base = Math.round((k * finalTile) / (wantCh + 1));
+    for (let d = 0; d < 6; d++) {
+      const cand = base + (d === 0 ? int(-1, 1) : d % 2 ? (d + 1) >> 1 : -(d >> 1));
+      if (cand < 3 || cand >= finalTile - 1 || used.has(cand)) continue;
+      challenges.push(cand); used.add(cand); break;
+    }
+  }
+  challenges.sort((a, b) => a - b);
+  return { length, finalTile, challengeTiles: challenges, redTiles: reds, shortcuts };
+}
+
+export function isChallengeTile(layout: BoardLayout, index: number): boolean {
+  return layout.challengeTiles.includes(index);
+}
+export function isRedTile(layout: BoardLayout, index: number): boolean {
+  return layout.redTiles.includes(index);
+}
+export function shortcutFrom(layout: BoardLayout, index: number): Shortcut | undefined {
+  return layout.shortcuts.find((s) => s.from === index);
+}
+
+export function clampTile(index: number, finalTile: number): number {
+  return Math.min(finalTile, Math.max(0, index));
+}
 
 /** Valores configuráveis (o PRD pede que a penalidade de falha seja ajustável até a decisão final). */
 export const BOARD_RULES = {
@@ -19,6 +110,8 @@ export const BOARD_RULES = {
   hopMs: 320, // tempo de animação por casa
   resultDelayMs: 2_200,
   returnToLobbyMs: 30_000,
+  shortcutPauseMs: 500, // pausa antes de seguir pelo atalho ou de voltar da casa vermelha
+  shortcutFlightMs: 1_300, // duração do salto pelo atalho (um arco único, não casa a casa)
 } as const;
 
 export const CHALLENGE_CONFIG = {
@@ -30,14 +123,6 @@ export const CHALLENGE_CONFIG = {
 export const CHALLENGE_KINDS = ["power", "colors", "clicks"] as const;
 export type ChallengeKind = (typeof CHALLENGE_KINDS)[number];
 export const PAD_COLORS = ["#ef4444", "#3b82f6", "#22c55e", "#eab308"] as const;
-
-export function isChallengeTile(index: number): boolean {
-  return CHALLENGE_TILES.includes(index);
-}
-
-export function clampTile(index: number): number {
-  return Math.min(FINAL_TILE, Math.max(0, index));
-}
 
 /** Casas percorridas ao se mover de `from` para `to` (excluindo a casa de origem). */
 export function tilePath(from: number, to: number): number[] {
@@ -103,12 +188,15 @@ export interface BoardPublicState {
   winner: string | null;
   /** Quando a fase é "encounter" ou "arena": os dois lutadores. */
   duel: [string, string] | null;
+  /** Tamanho do tabuleiro e semente: o cliente refaz o `BoardLayout` com `makeBoardLayout(size, seed)`. */
+  size: number;
+  seed: number;
   serverNow: number;
 }
 
 export type BoardEvent =
   | { kind: "roll"; playerId: string; value: number; from: number; to: number }
-  | { kind: "move"; playerId: string; from: number; to: number; reason: "challenge-success" | "challenge-fail" | "arena-win" | "arena-loss" }
+  | { kind: "move"; playerId: string; from: number; to: number; reason: "challenge-success" | "challenge-fail" | "arena-win" | "arena-loss" | "shortcut" | "red-tile" }
   | { kind: "encounter"; mover: string; other: string; tile: number }
   | { kind: "arena-result"; winner: string; loser: string; reason: string }
   | { kind: "challenge-result"; playerId: string; challenge: ChallengeKind; success: boolean; detail?: string }

@@ -11,6 +11,8 @@ export interface PlayerInfo {
   away: boolean;
   /** true enquanto participa de uma partida (some do lobby). */
   inGame?: boolean;
+  /** Bot de teste (só existe em servidor de desenvolvimento). */
+  bot?: boolean;
 }
 
 export interface ChatMessage {
@@ -34,6 +36,8 @@ export interface WelcomePayload {
   phase: RoomPhase;
   players: PlayerInfo[];
   history: ChatMessage[];
+  /** true só em servidor de desenvolvimento: o cliente pode oferecer ferramentas de teste (bots). */
+  dev?: boolean;
 }
 
 /** Servidor → cliente */
@@ -76,6 +80,10 @@ export const C = {
   ImpostorDecide: "impostor-decide",
   Roll: "roll",
   Challenge: "challenge",
+  BoardSize: "board-size",
+  /** Só aceitos por servidores em modo de desenvolvimento (DEV_MODE=1). */
+  DevAddBot: "dev-add-bot",
+  DevRemoveBot: "dev-remove-bot",
 } as const;
 
 /** Enviado a cada jogador: "in-game" só para quem participa da partida em andamento. */
@@ -91,6 +99,8 @@ export interface QueueGameState {
 
 export interface QueueState {
   games: Record<GameId, QueueGameState>;
+  /** Votos de tamanho do tabuleiro (id do jogador → nº de casas) de quem está na fila. */
+  boardVotes: Record<string, number>;
   /** Jogo em andamento na sala (as outras estações ficam ocupadas). */
   busy: GameId | null;
   serverNow: number;

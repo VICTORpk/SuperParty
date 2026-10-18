@@ -293,8 +293,12 @@ export interface PoolBallState { id: number; x: number; z: number; out: boolean 
 
 export interface PoolPublicState {
   phase: PoolPhase;
-  players: [string, string];
+  /** Todos os jogadores (2 a 4). */
+  players: string[];
+  /** Duas equipes: 1×1, 1×2 (com 3 jogadores) ou 2×2. Quem joga a seguir alterna entre as equipes. */
+  teams: string[][];
   turn: string;
+  /** Grupo de bolas de cada jogador (os companheiros de equipe têm o mesmo). */
   groups: Record<string, PoolGroup | null>;
   balls: PoolBallState[];
   /** O jogador da vez deve posicionar a bola branca. */
@@ -302,6 +306,8 @@ export interface PoolPublicState {
   turnEndsAt: number | null;
   message: string;
   winner: string | null;
+  /** Equipe vencedora (todos os integrantes). */
+  winners: string[];
   endReason: string | null;
   shotId: number;
   serverNow: number;

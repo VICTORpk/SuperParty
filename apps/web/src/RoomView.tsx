@@ -1,7 +1,7 @@
 import { Suspense, lazy, useCallback, useEffect, useRef, useState } from "react";
 import type { Room } from "colyseus.js";
 import {
-  C, CHAT_BUBBLE_MS, CHAT_MIN_INTERVAL_MS, GAMES, MAX_CHAT_LENGTH, MAX_PLAYERS, S, isEmote,
+  BOARD_SIZES, C, CHAT_BUBBLE_MS, CHAT_MIN_INTERVAL_MS, GAMES, MAX_CHAT_LENGTH, MAX_PLAYERS, S, isEmote,
   type ArenaEvent, type ArenaSnapshot, type AttackPayload, type BoardEvent, type BoardPublicState, type ChallengeInput,
   type ChatMessage, type DodgePayload, type EmoteId, type EmotePayload, type GameId, type PhasePayload, type PlayerInfo,
   type ImpostorPublicState, type PlayerPos, type PoolPublicState, type PoolShotMsg, type QueueState, type TableState, type WelcomePayload,
@@ -42,6 +42,8 @@ export function RoomView({ room, onLeave }: { room: Room; onLeave: (msg?: string
   const [settings, setSettings] = useState<Settings>(loadSettings);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  /** Servidor em modo de desenvolvimento (só vale se este build também for de desenvolvimento). */
+  const [devServer, setDevServer] = useState(false);
   const [wheelOpen, setWheelOpen] = useState(false);
   const [effects, setEffects] = useState<Effect[]>([]);
   const [gameInfo, setGameInfo] = useState<PhasePayload>({ phase: "lobby", game: null });
@@ -129,6 +131,7 @@ export function RoomView({ room, onLeave }: { room: Room; onLeave: (msg?: string
   const sendRoll = useCallback(() => room.send(C.Roll), [room]);
   const sendChallenge = useCallback((i: ChallengeInput) => room.send(C.Challenge, i), [room]);
   const endGame = useCallback(() => room.send(C.EndGame), [room]);
+  const voteBoardSize = useCallback((size: number) => room.send(C.BoardSize, { size }), [room]);
 
   /** Entra ou sai da fila do jogo da estação mais próxima. */
   const toggleQueue = useCallback(() => {
@@ -154,6 +157,7 @@ export function RoomView({ room, onLeave }: { room: Room; onLeave: (msg?: string
       setYou(w.you);
       youRef.current = w.you;
       setPlayers(w.players);
+      setDevServer(!!w.dev);
       setLines(w.history.map((m) => ({ key: `h${m.id}`, kind: "chat", nick: m.nick, text: m.text })));
     });
     room.onMessage(S.Players, (p: PlayerInfo[]) => setPlayers(p));
@@ -353,6 +357,22 @@ export function RoomView({ room, onLeave }: { room: Room; onLeave: (msg?: string
         </div>
       )}
 
+      {!inBoard && !inPool && !inImpostor && near === "board" && !queue?.busy && queue?.games.board.members.includes(you) && (
+        <div className="hud sizepick panel">
+          <div className="sizetitle">Tamanho do tabuleiro <small>(vence o mais votado)</small></div>
+          <div className="sizebtns">
+            {BOARD_SIZES.map((n) => {
+              const votes = Object.values(queue.boardVotes).filter((v) => v === n).length;
+              return (
+                <button key={n} className={queue.boardVotes[you] === n ? "primary" : ""} onClick={() => voteBoardSize(n)}>
+                  {n} casas{votes > 0 && <span className="votes"> · {votes}</span>}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
       {stationBtn && (
         <div className="hud stationbtn">
           <button className={stationBtn.variant} disabled={stationBtn.disabled} onClick={stationBtn.onClick}>{stationBtn.label}</button>
@@ -406,6 +426,7 @@ export function RoomView({ room, onLeave }: { room: Room; onLeave: (msg?: string
                   {p.isHost && <span className="tag">anfitrião</span>}
                   {p.inGame && <span className="tag">em partida</span>}
                   {p.away && <span className="tag">reconectando…</span>}
+                  {p.bot && <span className="tag">bot</span>}
                 </li>
               ))}
             </ul>
@@ -415,6 +436,14 @@ export function RoomView({ room, onLeave }: { room: Room; onLeave: (msg?: string
             <button onClick={() => { setMenuOpen(false); wheelRef.current = true; setWheelOpen(true); }}>Gestos ({keyLabel(settings.bindings.emotes)})</button>
             <button onClick={openSettings}>⚙ Configurações</button>
           </section>
+          {import.meta.env.DEV && devServer && (
+            <section className="menubtns devtools">
+              <h3>🛠 Modo Dev</h3>
+              <button onClick={() => room.send(C.DevAddBot)}>＋ Adicionar bot</button>
+              <button onClick={() => room.send(C.DevRemoveBot)} disabled={!players.some((p) => p.bot)}>－ Remover bot</button>
+              <a className="devlink" href="/dev" target="_blank" rel="noreferrer">Abrir o editor de mapas ↗</a>
+            </section>
+          )}
           <section className="help">
             <h3>Controles</h3>
             <span>{keyLabel(settings.bindings.forward)}{keyLabel(settings.bindings.left)}{keyLabel(settings.bindings.back)}{keyLabel(settings.bindings.right)}: mover · {keyLabel(settings.bindings.jump)}: pular</span>

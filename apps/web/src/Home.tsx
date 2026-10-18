@@ -72,6 +72,7 @@ export function Home({ onEnter, notice }: { onEnter: (r: Room) => void; notice: 
 
         {status && <p className="muted" role="status">{status}</p>}
         {error && <p className="error" role="alert">{error}</p>}
+        {import.meta.env.DEV && import.meta.env.VITE_DEV_MODE !== "0" && <a className="muted" href="/dev">🛠 Modo Dev: editor de mapas</a>}
       </div>
     </main>
   );

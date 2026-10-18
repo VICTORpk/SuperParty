@@ -11,6 +11,10 @@ npm test                  # testes unitários (Vitest)
 npx tsx apps/server/scripts/smoke.ts   # teste de fumaça com o servidor rodando
 ```
 
+## Modo Dev (editor de mapas e bots de teste)
+Só no ambiente local: abra `http://localhost:5173/dev` com `npm run dev:server` + `npm run dev:web` rodando. Não existe em produção.
+Detalhes, segurança e como estender: [`docs/MODO-DEV.md`](docs/MODO-DEV.md).
+
 ## Publicação (gratuita)
 - **Front-end:** Cloudflare Pages. Build: `npm run build -w @jogo/web`, saída `apps/web/dist`, variável `VITE_SERVER_URL=wss://<seu-servico>.onrender.com`.
 - **Servidor:** Render (Web Service, plano free). Build: `npm install`; Start: `npm run start -w @jogo/server`; health check: `/health`.

@@ -2,9 +2,9 @@ import { useEffect, useMemo, useRef } from "react";
 import { useFrame, useThree } from "@react-three/fiber";
 import { Html, OrbitControls } from "@react-three/drei";
 import * as THREE from "three";
-import { BOARD_LENGTH, BOARD_RULES, FINAL_TILE, isChallengeTile, type BoardPublicState, type PlayerInfo } from "@jogo/shared";
+import { BOARD_RULES, RED_TILE_BACK, isChallengeTile, isRedTile, makeBoardLayout, shortcutFrom, type BoardLayout, type BoardPublicState, type PlayerInfo } from "@jogo/shared";
 import { Avatar, type Bubble, type EmoteState } from "./Scene";
-import { DENSE, TILE_RADIUS, VOLCANO, terrainHeight, tilePosition } from "./boardLayout";
+import { TILE_RADIUS, boardGeometry, type BoardGeometry } from "./boardLayout";
 import { Clouds, FacetedWater, Flat, GiantFlower, GoldStar, Palm, Rock, seeded } from "./scenery";
 import type { RollInfo } from "./BoardHUD";
 
@@ -20,17 +20,21 @@ export interface BoardSceneProps {
 }
 
 // ---------------------------------------------------------------- casas
-const COLORS = { normal: "#3d8bff", challenge: "#43c75b", start: "#ff5a5f", end: "#ffd23f" };
+const COLORS = { normal: "#3d8bff", challenge: "#43c75b", start: "#ff5a5f", end: "#ffd23f", red: "#e11d2e", shortcut: "#a855f7" };
 
-/** Textura circular colorida da casa (azul = normal, verde com "!" = desafio, dourada = chegada). */
-function makeTileTexture(index: number): THREE.CanvasTexture {
-  const size = 256;
+/** Textura circular colorida da casa (azul = normal, verde com "!" = desafio, vermelha = volta 2, roxa = atalho, dourada = chegada). */
+function makeTileTexture(index: number, layout: BoardLayout, size: number): THREE.CanvasTexture {
   const c = document.createElement("canvas");
   c.width = c.height = size;
   const g = c.getContext("2d")!;
-  const challenge = isChallengeTile(index), start = index === 0, end = index === FINAL_TILE;
-  const color = end ? COLORS.end : start ? COLORS.start : challenge ? COLORS.challenge : COLORS.normal;
-  const cx = size / 2;
+  const challenge = isChallengeTile(layout, index), start = index === 0, end = index === layout.finalTile;
+  const red = isRedTile(layout, index);
+  const sc = shortcutFrom(layout, index);
+  const shortcutEnd = layout.shortcuts.some((x) => x.to === index);
+  const color = end ? COLORS.end : start ? COLORS.start : red ? COLORS.red : sc || shortcutEnd ? COLORS.shortcut : challenge ? COLORS.challenge : COLORS.normal;
+  const k = size / 256; // os desenhos abaixo foram feitos para 256 px
+  g.scale(k, k);
+  const cx = 128;
   const grad = g.createRadialGradient(cx, cx - 30, 10, cx, cx, cx);
   grad.addColorStop(0, "#ffffffaa");
   grad.addColorStop(0.35, color);
@@ -52,6 +56,9 @@ function makeTileTexture(index: number): THREE.CanvasTexture {
   if (end) { g.font = "110px system-ui"; g.fillText("⭐", cx, cx - 6); g.font = "bold 44px system-ui"; g.fillText("FIM", cx, cx + 74); }
   else if (start) { g.font = "bold 52px system-ui"; g.fillText("INÍCIO", cx, cx); }
   else if (challenge) { g.font = "bold 130px system-ui"; g.fillText("!", cx, cx - 16); g.font = "bold 40px system-ui"; g.fillText(String(index), cx, cx + 78); }
+  else if (red) { g.font = "bold 96px system-ui"; g.fillText(`-${RED_TILE_BACK}`, cx, cx - 6); g.font = "bold 40px system-ui"; g.fillText(String(index), cx, cx + 78); }
+  else if (sc) { g.font = "bold 100px system-ui"; g.fillText("⚡", cx, cx - 10); g.font = "bold 38px system-ui"; g.fillText(`→ ${sc.to}`, cx, cx + 76); }
+  else if (shortcutEnd) { g.font = "bold 84px system-ui"; g.fillText(String(index), cx, cx - 4); g.font = "bold 34px system-ui"; g.fillText("atalho", cx, cx + 74); }
   else { g.font = "bold 84px system-ui"; g.fillText(String(index), cx, cx + 4); }
   const tex = new THREE.CanvasTexture(c);
   tex.colorSpace = THREE.SRGBColorSpace;
@@ -59,13 +66,16 @@ function makeTileTexture(index: number): THREE.CanvasTexture {
   return tex;
 }
 
-function Tiles() {
-  const textures = useMemo(() => Array.from({ length: BOARD_LENGTH }, (_, i) => makeTileTexture(i)), []);
+function Tiles({ geo, layout }: { geo: BoardGeometry; layout: BoardLayout }) {
+  const textures = useMemo(() => {
+    const size = layout.length > 70 ? 160 : 256; // menos memória nos tabuleiros grandes
+    return Array.from({ length: layout.length }, (_, i) => makeTileTexture(i, layout, size));
+  }, [layout]);
   useEffect(() => () => textures.forEach((t) => t.dispose()), [textures]);
   return (
     <>
       {textures.map((tex, i) => {
-        const p = tilePosition(i);
+        const p = geo.tilePosition(i);
         return (
           <group key={i} position={[p.x, p.y, p.z]}>
             <mesh position={[0, 0.1, 0]}><cylinderGeometry args={[TILE_RADIUS * 1.06, TILE_RADIUS * 1.12, 0.3, 28]} /><meshStandardMaterial color="#f4efe2" roughness={0.6} /></mesh>
@@ -78,9 +88,9 @@ function Tiles() {
 }
 
 /** Trilha de terra clara que liga as casas. */
-function Trail() {
+function Trail({ board }: { board: BoardGeometry }) {
   const geo = useMemo(() => {
-    const pts = DENSE.filter((_, i) => i % 2 === 0);
+    const pts = board.dense.filter((_, i) => i % 2 === 0);
     const pos: number[] = [];
     const idx: number[] = [];
     const W = 1.5;
@@ -94,19 +104,20 @@ function Trail() {
     g.setIndex(idx);
     g.computeVertexNormals();
     return g;
-  }, []);
+  }, [board]);
   return <mesh geometry={geo}><meshStandardMaterial color="#f2dca4" roughness={1} side={THREE.DoubleSide} /></mesh>;
 }
 
 // ---------------------------------------------------------------- terreno
 const hash = (x: number, z: number) => { const s = Math.sin(x * 12.9898 + z * 78.233) * 43758.5453; return s - Math.floor(s); };
 
-function Terrain() {
+function Terrain({ board }: { board: BoardGeometry }) {
   const geo = useMemo(() => {
-    const plane = new THREE.PlaneGeometry(80, 70, 40, 35);
+    const k = board.scale;
+    const plane = new THREE.PlaneGeometry(80 * k, 70 * k, Math.round(40 * k), Math.round(35 * k));
     plane.rotateX(-Math.PI / 2);
     const pos = plane.attributes.position as THREE.BufferAttribute;
-    for (let i = 0; i < pos.count; i++) pos.setY(i, terrainHeight(pos.getX(i), pos.getZ(i)));
+    for (let i = 0; i < pos.count; i++) pos.setY(i, board.terrainHeight(pos.getX(i), pos.getZ(i)));
     const g = plane.toNonIndexed();
     const p = g.attributes.position as THREE.BufferAttribute;
     const colors: number[] = [];
@@ -126,23 +137,18 @@ function Terrain() {
     g.setAttribute("color", new THREE.Float32BufferAttribute(colors, 3));
     g.computeVertexNormals();
     return g;
-  }, []);
+  }, [board]);
   return <mesh geometry={geo}><meshStandardMaterial vertexColors flatShading roughness={1} /></mesh>;
 }
 
-function distToPath(x: number, z: number): number {
-  let best = Infinity;
-  for (let i = 0; i < DENSE.length; i += 2) best = Math.min(best, (DENSE[i]!.x - x) ** 2 + (DENSE[i]!.z - z) ** 2);
-  return Math.sqrt(best);
-}
-
-function scatter(count: number, seed: number, accept: (x: number, z: number, h: number, d: number) => boolean) {
+function scatter(board: BoardGeometry, count: number, seed: number, accept: (x: number, z: number, h: number, d: number) => boolean) {
   const r = seeded(seed);
   const out: { x: number; y: number; z: number; k: number; seed: number }[] = [];
-  for (let tries = 0; tries < count * 80 && out.length < count; tries++) {
-    const x = (r() - 0.5) * 62, z = (r() - 0.5) * 54;
-    const h = terrainHeight(x, z);
-    const d = distToPath(x, z);
+  const n = Math.round(count * board.scale * board.scale);
+  for (let tries = 0; tries < n * 80 && out.length < n; tries++) {
+    const x = (r() - 0.5) * 62 * board.scale, z = (r() - 0.5) * 54 * board.scale;
+    const h = board.terrainHeight(x, z);
+    const d = board.distToPath(x, z);
     if (accept(x, z, h, d)) out.push({ x, y: h, z, k: r(), seed: tries });
   }
   return out;
@@ -168,8 +174,8 @@ function Smoke() {
 }
 
 /** Portal de chegada: dois pilares, viga e estrela dourada giratória. */
-function FinishGate() {
-  const p = tilePosition(FINAL_TILE);
+function FinishGate({ board }: { board: BoardGeometry }) {
+  const p = board.tilePosition(board.length - 1);
   const yaw = Math.atan2(-p.tx, -p.tz);
   return (
     <group position={[p.x, p.y, p.z]} rotation-y={yaw}>
@@ -181,8 +187,8 @@ function FinishGate() {
   );
 }
 
-function StartGate() {
-  const p = tilePosition(0);
+function StartGate({ board }: { board: BoardGeometry }) {
+  const p = board.tilePosition(0);
   const yaw = Math.atan2(-p.tx, -p.tz);
   return (
     <group position={[p.x, p.y, p.z]} rotation-y={yaw}>
@@ -193,26 +199,63 @@ function StartGate() {
   );
 }
 
+/** Atalhos: um arco de marcadores roxos no ar ligando a casa de entrada à de saída. */
+function Shortcuts({ board, layout }: { board: BoardGeometry; layout: BoardLayout }) {
+  const items = useMemo(() => layout.shortcuts.map((sc) => {
+    const a = board.tilePosition(sc.from), b = board.tilePosition(sc.to);
+    const dist = Math.hypot(b.x - a.x, b.z - a.z);
+    const peak = Math.min(9, 2.5 + dist * 0.12);
+    const n = Math.max(6, Math.round(dist / 1.6));
+    const pts = Array.from({ length: n + 1 }, (_, i) => {
+      const t = i / n;
+      return { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t + Math.sin(t * Math.PI) * peak + 0.6, z: a.z + (b.z - a.z) * t, t };
+    });
+    return { sc, pts, a, b };
+  }), [board, layout]);
+  return (
+    <>
+      {items.map(({ sc, pts, a, b }) => (
+        <group key={sc.from}>
+          {pts.map((p, i) => (
+            <mesh key={i} position={[p.x, p.y, p.z]} scale={0.35 + 0.15 * Math.sin(p.t * Math.PI)}>
+              <octahedronGeometry args={[0.55, 0]} /><meshStandardMaterial color="#a855f7" emissive="#7c3aed" emissiveIntensity={0.9} flatShading />
+            </mesh>
+          ))}
+          {[a, b].map((p, i) => (
+            <group key={i} position={[p.x, p.y, p.z]}>
+              {[-1.45, 1.45].map((x) => <mesh key={x} position={[x, 1.2, 0]}><cylinderGeometry args={[0.14, 0.18, 2.4, 6]} /><Flat color="#a855f7" /></mesh>)}
+              <mesh position={[0, 2.5, 0]}><boxGeometry args={[3.2, 0.3, 0.3]} /><Flat color="#c084fc" /></mesh>
+            </group>
+          ))}
+        </group>
+      ))}
+    </>
+  );
+}
+
 /** Ilha tropical: terreno colorido com colinas, praia, lagoa, vulcão, palmeiras e flores gigantes. */
-function World() {
-  const palms = useMemo(() => scatter(22, 3, (_x, _z, h, d) => h > 0.15 && h < 1.4 && d > 3.4), []);
-  const flowers = useMemo(() => scatter(10, 9, (_x, _z, h, d) => h > 0.6 && h < 4 && d > 3.8), []);
-  const bushes = useMemo(() => scatter(26, 17, (_x, _z, h, d) => h > 0.5 && h < 5 && d > 3), []);
-  const rocks = useMemo(() => scatter(16, 21, (_x, _z, h, d) => h > 0.2 && d > 3.2), []);
-  const peakY = terrainHeight(VOLCANO.x, VOLCANO.z);
+function World({ board, layout }: { board: BoardGeometry; layout: BoardLayout }) {
+  const k = board.scale;
+  const palms = useMemo(() => scatter(board, 22, 3, (_x, _z, h, d) => h > 0.15 && h < 1.4 && d > 3.4), [board]);
+  const flowers = useMemo(() => scatter(board, 10, 9, (_x, _z, h, d) => h > 0.6 && h < 4 && d > 3.8), [board]);
+  const bushes = useMemo(() => scatter(board, 26, 17, (_x, _z, h, d) => h > 0.5 && h < 5 && d > 3), [board]);
+  const rocks = useMemo(() => scatter(board, 16, 21, (_x, _z, h, d) => h > 0.2 && d > 3.2), [board]);
+  const { volcano } = board;
+  const peakY = board.terrainHeight(volcano.x, volcano.z);
   return (
     <>
       <color attach="background" args={["#8fd3ff"]} />
-      <fog attach="fog" args={["#bfe8ff", 70, 190]} />
+      <fog attach="fog" args={["#bfe8ff", 70 * k, 190 * k]} />
       <hemisphereLight args={["#ffffff", "#7fd36b", 1.1]} />
       <directionalLight position={[22, 30, 12]} intensity={1.3} color="#fff6e0" />
 
-      <FacetedWater width={220} depth={220} segments={44} position={[0, -0.55, 0]} color="#27c3d9" opacity={0.93} />
-      <Terrain />
-      <Trail />
+      <FacetedWater width={220 * k} depth={220 * k} segments={Math.round(44 * k)} position={[0, -0.55, 0]} color="#27c3d9" opacity={0.93} />
+      <Terrain board={board} />
+      <Trail board={board} />
+      <Shortcuts board={board} layout={layout} />
 
       {/* vulcão com cratera brilhante e fumaça */}
-      <group position={[VOLCANO.x, peakY, VOLCANO.z]}>
+      <group position={[volcano.x, peakY, volcano.z]}>
         <mesh position={[0, 0.05, 0]}><cylinderGeometry args={[1.5, 1.8, 0.3, 9]} /><meshStandardMaterial color="#ff6a1a" emissive="#ff4500" emissiveIntensity={1} flatShading /></mesh>
         <Smoke />
       </group>
@@ -222,9 +265,9 @@ function World() {
       {bushes.map((p, i) => <mesh key={i} position={[p.x, p.y + 0.35, p.z]} scale={0.9 + p.k * 0.6}><icosahedronGeometry args={[0.8, 0]} /><Flat color={["#3fae3a", "#58c24a", "#2e9a3a"][i % 3]!} /></mesh>)}
       {rocks.map((p, i) => <Rock key={i} position={[p.x, p.y + 0.1, p.z]} scale={0.9 + p.k * 0.9} seed={p.seed} />)}
 
-      <StartGate />
-      <FinishGate />
-      <Clouds count={11} radius={70} height={[20, 38]} seed={12} />
+      <StartGate board={board} />
+      <FinishGate board={board} />
+      <Clouds count={Math.round(11 * k)} radius={70 * k} height={[20, 38]} seed={12} />
     </>
   );
 }
@@ -232,16 +275,16 @@ function World() {
 // ---------------------------------------------------------------- peças
 const noAction = () => undefined;
 
-interface PawnState { idx: number; progress: number; hopping: boolean; heading: number }
+interface PawnState { idx: number; progress: number; hopping: boolean; flight: boolean; heading: number }
 
-function Pawn({ info, state, slot, slots, isTurn, bubble, emotes, isWinner, pawnRefs }:
-  { info: PlayerInfo; state: BoardPublicState; slot: number; slots: number; isTurn: boolean; bubble?: string; emotes: Ref<Map<string, EmoteState>>; isWinner: boolean; pawnRefs: Ref<Map<string, THREE.Group>> }) {
+function Pawn({ info, state, board, layout, slot, slots, isTurn, bubble, emotes, isWinner, pawnRefs }:
+  { info: PlayerInfo; state: BoardPublicState; board: BoardGeometry; layout: BoardLayout; slot: number; slots: number; isTurn: boolean; bubble?: string; emotes: Ref<Map<string, EmoteState>>; isWinner: boolean; pawnRefs: Ref<Map<string, THREE.Group>> }) {
   const group = useRef<THREE.Group>(null);
   const ring = useRef<THREE.Mesh>(null);
   const speed = useRef(0);
   const height = useRef(0);
-  const start = tilePosition(state.positions[info.id] ?? 0);
-  const ps = useRef<PawnState>({ idx: state.positions[info.id] ?? 0, progress: 0, hopping: false, heading: Math.atan2(-start.tx, -start.tz) });
+  const start = board.tilePosition(state.positions[info.id] ?? 0);
+  const ps = useRef<PawnState>({ idx: state.positions[info.id] ?? 0, progress: 0, hopping: false, flight: false, heading: Math.atan2(-start.tx, -start.tz) });
   const target = state.positions[info.id] ?? 0;
   const getEmote = () => emotes.current.get(info.id);
 
@@ -255,19 +298,23 @@ function Pawn({ info, state, slot, slots, isTurn, bubble, emotes, isWinner, pawn
     const g = group.current;
     if (!g) return;
     const p = ps.current;
-    let cur = tilePosition(p.idx);
+    let cur = board.tilePosition(p.idx);
     let pos = { x: cur.x, y: cur.y, z: cur.z };
-    if (!p.hopping && p.idx !== target) { p.hopping = true; p.progress = 0; }
+    if (!p.hopping && p.idx !== target) {
+      p.hopping = true; p.progress = 0;
+      p.flight = shortcutFrom(layout, p.idx)?.to === target; // atalho: um único arco até a casa de saída
+    }
     let hop = 0;
     if (p.hopping) {
       const step = target > p.idx ? 1 : -1;
-      const next = tilePosition(p.idx + step);
-      p.progress += dt / (BOARD_RULES.hopMs / 1000);
+      const nextIdx = p.flight ? target : p.idx + step;
+      const next = board.tilePosition(nextIdx);
+      p.progress += dt / ((p.flight ? BOARD_RULES.shortcutFlightMs : BOARD_RULES.hopMs) / 1000);
       const k = Math.min(1, p.progress);
       pos = { x: cur.x + (next.x - cur.x) * k, y: cur.y + (next.y - cur.y) * k, z: cur.z + (next.z - cur.z) * k };
-      hop = Math.sin(k * Math.PI) * 0.9;
+      hop = Math.sin(k * Math.PI) * (p.flight ? Math.min(9, 2.5 + Math.hypot(next.x - cur.x, next.z - cur.z) * 0.12) : 0.9);
       p.heading = Math.atan2(-(next.x - cur.x), -(next.z - cur.z));
-      if (p.progress >= 1) { p.idx += step; p.hopping = false; p.progress = 0; cur = tilePosition(p.idx); }
+      if (p.progress >= 1) { p.idx = nextIdx; p.hopping = false; p.flight = false; p.progress = 0; cur = board.tilePosition(p.idx); }
     } else {
       p.heading = Math.atan2(-cur.tx, -cur.tz);
     }
@@ -391,7 +438,7 @@ function DiceBlock({ state, pawnRefs, roll }: { state: BoardPublicState; pawnRef
 }
 
 /** Câmera orbital que acompanha a peça da vez. */
-function CameraRig({ state, pawnRefs }: { state: BoardPublicState; pawnRefs: Ref<Map<string, THREE.Group>> }) {
+function CameraRig({ state, board, pawnRefs }: { state: BoardPublicState; board: BoardGeometry; pawnRefs: Ref<Map<string, THREE.Group>> }) {
   const controls = useRef<{ target: THREE.Vector3; update: () => void } | null>(null);
   const camera = useThree((s) => s.camera);
   const focus = useRef(new THREE.Vector3());
@@ -403,7 +450,7 @@ function CameraRig({ state, pawnRefs }: { state: BoardPublicState; pawnRefs: Ref
     if (!c) return;
     if (!init.current) {
       // primeira vez: alvo e câmera começam perto da peça da vez
-      const p = tilePosition(state.positions[state.turn] ?? 0);
+      const p = board.tilePosition(state.positions[state.turn] ?? 0);
       c.target.set(p.x, p.y + 1, p.z);
       camera.position.set(p.x - p.tx * 9 + 3, p.y + 9, p.z - p.tz * 9 + 7);
       c.update();
@@ -411,7 +458,7 @@ function CameraRig({ state, pawnRefs }: { state: BoardPublicState; pawnRefs: Ref
       return;
     }
     const pawn = pawnRefs.current.get(state.turn);
-    const fallback = tilePosition(state.positions[state.turn] ?? 0);
+    const fallback = board.tilePosition(state.positions[state.turn] ?? 0);
     const tx = pawn ? pawn.position.x : fallback.x, ty = (pawn ? pawn.position.y : fallback.y) + 1, tz = pawn ? pawn.position.z : fallback.z;
     focus.current.set(tx, ty, tz);
     const before = c.target.clone();
@@ -425,7 +472,9 @@ function CameraRig({ state, pawnRefs }: { state: BoardPublicState; pawnRefs: Ref
 export function BoardContent({ state, players, you, bubbles, emotes, roll }: BoardSceneProps) {
   const pawnRefs = useRef(new Map<string, THREE.Group>());
   const camera = useThree((st) => st.camera) as THREE.PerspectiveCamera;
-  useEffect(() => { camera.fov = 55; camera.near = 0.1; camera.far = 400; camera.updateProjectionMatrix(); }, [camera]);
+  const layout = useMemo(() => makeBoardLayout(state.size, state.seed), [state.size, state.seed]);
+  const board = useMemo(() => boardGeometry(state.size), [state.size]);
+  useEffect(() => { camera.fov = 55; camera.near = 0.1; camera.far = 400 * board.scale; camera.updateProjectionMatrix(); }, [camera, board]);
   const byTile = new Map<number, string[]>();
   for (const id of state.order) {
     const t = state.positions[id] ?? 0;
@@ -435,20 +484,20 @@ export function BoardContent({ state, players, you, bubbles, emotes, roll }: Boa
 
   return (
     <>
-      <World />
-      <Tiles />
+      <World board={board} layout={layout} />
+      <Tiles geo={board} layout={layout} />
       {state.order.map((id) => {
         const info = players.find((p) => p.id === id);
         if (!info) return null;
         const group = byTile.get(state.positions[id] ?? 0) ?? [id];
         return (
-          <Pawn key={id} info={info} state={state} slot={group.indexOf(id)} slots={group.length} pawnRefs={pawnRefs}
+          <Pawn key={id} info={info} state={state} board={board} layout={layout} slot={group.indexOf(id)} slots={group.length} pawnRefs={pawnRefs}
             isTurn={state.phase !== "finished" && state.turn === id} bubble={bubbles[id]?.text} emotes={emotes}
             isWinner={state.winner === id} />
         );
       })}
       <DiceBlock state={state} pawnRefs={pawnRefs} roll={roll} />
-      <CameraRig state={state} pawnRefs={pawnRefs} />
+      <CameraRig state={state} board={board} pawnRefs={pawnRefs} />
     </>
   );
 }

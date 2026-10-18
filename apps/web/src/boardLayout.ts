@@ -1,6 +1,6 @@
-import { BOARD_LENGTH } from "@jogo/shared";
+import type { BoardLayout } from "@jogo/shared";
 
-/** Percurso sinuoso (estilo "tabuleiro de festa"): pontos de controle em (x, z, altura). */
+/** Percurso sinuoso (estilo "tabuleiro de festa"): pontos de controle em (x, z, altura) para a ilha base. */
 const CONTROL: [number, number, number][] = [
   [-21, 13, 0], [-14, 16, 0], [-6, 14, 0.3], [0, 9.5, 0.6], [6, 12.5, 0.3], [14, 15, 0], [20, 9.5, 0.2],
   [21.5, 1.5, 0.8], [15.5, -4, 1.2], [8, -3, 1.3], [2, -6.5, 1], [-5, -4.5, 0.7], [-12.5, -1.5, 0.9],
@@ -8,9 +8,14 @@ const CONTROL: [number, number, number][] = [
 ];
 
 export const TILE_RADIUS = 1.25;
+/** Distância mínima desejada entre os centros de casas vizinhas. */
+const MIN_SPACING = 2.9;
+const BASE_VOLCANO = { x: -7, z: 5, height: 9 };
+const BASE_LAGOON = { x: 12, z: 5 };
+
 export interface PathPoint { x: number; y: number; z: number; tx: number; tz: number }
 
-/** Catmull-Rom entre pontos de controle, amostrado densamente. */
+/** Catmull-Rom entre pontos de controle, amostrado densamente (coordenadas da ilha base). */
 function buildDense(): PathPoint[] {
   const out: PathPoint[] = [];
   const n = CONTROL.length;
@@ -35,37 +40,20 @@ function buildDense(): PathPoint[] {
   return out;
 }
 
-export const DENSE = buildDense();
-
-const cum: number[] = [0];
-for (let i = 1; i < DENSE.length; i++) cum.push(cum[i - 1]! + Math.hypot(DENSE[i]!.x - DENSE[i - 1]!.x, DENSE[i]!.z - DENSE[i - 1]!.z));
-export const PATH_LENGTH = cum[cum.length - 1]!;
-
-function sampleAt(s: number): PathPoint {
-  let lo = 0, hi = cum.length - 1;
-  while (hi - lo > 1) { const mid = (lo + hi) >> 1; if (cum[mid]! <= s) lo = mid; else hi = mid; }
-  const a = DENSE[lo]!, b = DENSE[hi]!;
-  const k = (s - cum[lo]!) / Math.max(1e-6, cum[hi]! - cum[lo]!);
-  return { x: a.x + (b.x - a.x) * k, y: a.y + (b.y - a.y) * k, z: a.z + (b.z - a.z) * k, tx: a.tx + (b.tx - a.tx) * k, tz: a.tz + (b.tz - a.tz) * k };
-}
-
-const TILES: PathPoint[] = Array.from({ length: BOARD_LENGTH }, (_, i) => sampleAt((i / (BOARD_LENGTH - 1)) * PATH_LENGTH));
-
-/** Posição (x, y, z) do centro da casa; `tx/tz` é a direção do percurso. */
-export function tilePosition(index: number): PathPoint {
-  return TILES[Math.max(0, Math.min(BOARD_LENGTH - 1, index))]!;
-}
+const BASE_DENSE = buildDense();
+const BASE_LENGTH = (() => {
+  let s = 0;
+  for (let i = 1; i < BASE_DENSE.length; i++) s += Math.hypot(BASE_DENSE[i]!.x - BASE_DENSE[i - 1]!.x, BASE_DENSE[i]!.z - BASE_DENSE[i - 1]!.z);
+  return s;
+})();
 
 const smooth = (a: number, b: number, v: number) => { const t = Math.min(1, Math.max(0, (v - a) / (b - a))); return t * t * (3 - 2 * t); };
 
-export const VOLCANO = { x: -7, z: 5, height: 9 };
-export const LAGOON = { x: 12, z: 5 };
-
-/** Altura do terreno: segue o percurso de perto, com colinas, vulcão, lagoa e praia nas bordas. */
-export function terrainHeight(x: number, z: number): number {
+/** Altura do terreno da ilha base: segue o percurso de perto, com colinas, vulcão, lagoa e praia nas bordas. */
+function baseHeight(x: number, z: number): number {
   let best = Infinity, by = 0;
-  for (let i = 0; i < DENSE.length; i += 2) {
-    const p = DENSE[i]!;
+  for (let i = 0; i < BASE_DENSE.length; i += 2) {
+    const p = BASE_DENSE[i]!;
     const d2 = (p.x - x) ** 2 + (p.z - z) ** 2;
     if (d2 < best) { best = d2; by = p.y; }
   }
@@ -73,8 +61,61 @@ export function terrainHeight(x: number, z: number): number {
   const w = Math.exp(-((d / 5.2) ** 2));
   const r = Math.hypot(x / 31, z / 26);
   let base = 0.3 - smooth(0.7, 1.0, r) * 4.5;
-  base += VOLCANO.height * Math.exp(-((Math.hypot(x - VOLCANO.x, z - VOLCANO.z) / 4.6) ** 2));
-  base -= 2.6 * Math.exp(-((Math.hypot(x - LAGOON.x, z - LAGOON.z) / 4.2) ** 2));
+  base += BASE_VOLCANO.height * Math.exp(-((Math.hypot(x - BASE_VOLCANO.x, z - BASE_VOLCANO.z) / 4.6) ** 2));
+  base -= 2.6 * Math.exp(-((Math.hypot(x - BASE_LAGOON.x, z - BASE_LAGOON.z) / 4.2) ** 2));
   base += 0.45 * Math.sin(x * 0.33) * Math.cos(z * 0.29);
   return by * w + base * (1 - w);
 }
+
+/**
+ * Geometria do tabuleiro para um número de casas: a mesma ilha ampliada por `scale` (o percurso fica mais
+ * longo e as casas continuam com o mesmo tamanho e espaçamento mínimo), com as casas distribuídas por distância.
+ */
+export interface BoardGeometry {
+  length: number;
+  scale: number;
+  dense: PathPoint[];
+  tiles: PathPoint[];
+  volcano: { x: number; z: number; height: number };
+  lagoon: { x: number; z: number };
+  tilePosition(index: number): PathPoint;
+  terrainHeight(x: number, z: number): number;
+  distToPath(x: number, z: number): number;
+}
+
+const cache = new Map<number, BoardGeometry>();
+
+export function boardGeometry(length: number): BoardGeometry {
+  const hit = cache.get(length);
+  if (hit) return hit;
+  const scale = Math.max(1, (MIN_SPACING * (length - 1)) / BASE_LENGTH);
+  const dense: PathPoint[] = BASE_DENSE.map((p) => ({ x: p.x * scale, y: p.y, z: p.z * scale, tx: p.tx, tz: p.tz }));
+  const cum: number[] = [0];
+  for (let i = 1; i < dense.length; i++) cum.push(cum[i - 1]! + Math.hypot(dense[i]!.x - dense[i - 1]!.x, dense[i]!.z - dense[i - 1]!.z));
+  const total = cum[cum.length - 1]!;
+  const sampleAt = (s: number): PathPoint => {
+    let lo = 0, hi = cum.length - 1;
+    while (hi - lo > 1) { const mid = (lo + hi) >> 1; if (cum[mid]! <= s) lo = mid; else hi = mid; }
+    const a = dense[lo]!, b = dense[hi]!;
+    const k = (s - cum[lo]!) / Math.max(1e-6, cum[hi]! - cum[lo]!);
+    return { x: a.x + (b.x - a.x) * k, y: a.y + (b.y - a.y) * k, z: a.z + (b.z - a.z) * k, tx: a.tx + (b.tx - a.tx) * k, tz: a.tz + (b.tz - a.tz) * k };
+  };
+  const tiles = Array.from({ length }, (_, i) => sampleAt((i / (length - 1)) * total));
+  const geo: BoardGeometry = {
+    length, scale, dense, tiles,
+    volcano: { x: BASE_VOLCANO.x * scale, z: BASE_VOLCANO.z * scale, height: BASE_VOLCANO.height },
+    lagoon: { x: BASE_LAGOON.x * scale, z: BASE_LAGOON.z * scale },
+    tilePosition: (index) => tiles[Math.max(0, Math.min(length - 1, index))]!,
+    terrainHeight: (x, z) => baseHeight(x / scale, z / scale),
+    distToPath: (x, z) => {
+      let best = Infinity;
+      for (let i = 0; i < dense.length; i += 2) best = Math.min(best, (dense[i]!.x - x) ** 2 + (dense[i]!.z - z) ** 2);
+      return Math.sqrt(best);
+    },
+  };
+  cache.set(length, geo);
+  return geo;
+}
+
+/** Tipo reexportado para quem só precisa do layout de casas. */
+export type { BoardLayout };

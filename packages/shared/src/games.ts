@@ -13,7 +13,7 @@ export interface GameDef {
 
 export const GAMES: Record<GameId, GameDef> = {
   board: { id: "board", label: "Tabuleiro", icon: "🎲", min: 2, max: 10, available: true, station: { x: -10, z: -8 } },
-  pool: { id: "pool", label: "Sinuca", icon: "🎱", min: 2, max: 2, available: true, station: { x: 10, z: -8 } },
+  pool: { id: "pool", label: "Sinuca", icon: "🎱", min: 2, max: 4, available: true, station: { x: 10, z: -8 } },
   impostor: { id: "impostor", label: "Sinuca Impostor", icon: "🍾", min: 4, max: 10, available: true, station: { x: 0, z: 12 } },
 };
 

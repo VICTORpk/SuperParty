@@ -5,14 +5,8 @@ import { getGradient } from "./toon";
 
 /** Kit de cenário em estilo "low poly" (faces planas, ilhas em camadas, pinheiros, pedras, mesas do deserto, água facetada). */
 
-/** Gerador pseudoaleatório determinístico (mesmo cenário para todos os jogadores). */
-export function seeded(seed: number) {
-  let s = seed >>> 0 || 1;
-  return () => {
-    s = (s * 1664525 + 1013904223) >>> 0;
-    return s / 4294967296;
-  };
-}
+export { seeded } from "@jogo/shared";
+import { seeded } from "@jogo/shared";
 
 export const PALETTE = {
   grass: ["#7bbf4a", "#6aae3f", "#8cd04e"],
@@ -194,15 +188,7 @@ export function Clouds({ count = 8, radius = 55, height = [14, 26] as [number, n
   );
 }
 
-/** Espalha elementos em um anel (determinístico). */
-export function ringPoints(count: number, rMin: number, rMax: number, seed: number, zScale = 1) {
-  const r = seeded(seed);
-  return Array.from({ length: count }, (_, i) => {
-    const a = (i / count) * Math.PI * 2 + (r() - 0.5) * 0.4;
-    const d = rMin + r() * (rMax - rMin);
-    return { x: Math.cos(a) * d, z: Math.sin(a) * d * zScale, k: r(), seed: i + seed * 17 };
-  });
-}
+export { ringPoints } from "@jogo/shared";
 
 /** Palmeira curvada com folhas e cocos. */
 export function Palm({ position = [0, 0, 0], scale = 1, lean = 0.25, rotation = 0 }:

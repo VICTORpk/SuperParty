@@ -7,8 +7,8 @@ import { type Settings } from "./controls";
 type Ref<T> = React.MutableRefObject<T>;
 
 const END_TEXT: Record<string, string> = {
-  eight: "encaçapou a bola 8", "eight-early": "o adversário encaçapou a bola 8 cedo demais",
-  "eight-foul": "falta ao encaçapar a bola 8", "eight-scratch": "o adversário derrubou a bola 8 com falta", desistencia: "o adversário saiu",
+  eight: "encaçapou a bola 8", "eight-early": "a equipe adversária encaçapou a bola 8 cedo demais",
+  "eight-foul": "falta ao encaçapar a bola 8", "eight-scratch": "a equipe adversária derrubou a bola 8 com falta", desistencia: "a equipe adversária saiu",
 };
 
 function BallDot({ id, small }: { id: number; small?: boolean }) {
@@ -22,13 +22,21 @@ function BallDot({ id, small }: { id: number; small?: boolean }) {
   );
 }
 
-function PlayerCard({ state, id, info, active, right }: { state: PoolPublicState; id: string; info?: PlayerInfo; active: boolean; right?: boolean }) {
-  const group: PoolGroup | null = state.groups[id] ?? null;
+/** Cartão de uma equipe (1 ou 2 jogadores); o integrante da vez fica destacado. */
+function TeamCard({ state, team, players, active, right }: { state: PoolPublicState; team: string[]; players: PlayerInfo[]; active: boolean; right?: boolean }) {
+  const group: PoolGroup | null = state.groups[team[0] ?? ""] ?? null;
   const out = state.balls.filter((b) => b.out && b.id !== 0 && group && groupOf(b.id) === group).map((b) => b.id);
   const remaining = group ? state.balls.filter((b) => !b.out && groupOf(b.id) === group).length : null;
   return (
     <div className={`pcard${active ? " active" : ""}${right ? " right" : ""}`}>
-      <div className="pname"><span className="dot" style={{ background: info?.color ?? "#999" }} />{info?.nick ?? "?"}</div>
+      {team.map((id) => {
+        const info = players.find((p) => p.id === id);
+        return (
+          <div key={id} className="pname" style={{ opacity: state.turn === id || team.length === 1 ? 1 : 0.6 }}>
+            <span className="dot" style={{ background: info?.color ?? "#999" }} />{info?.nick ?? "?"}{team.length > 1 && state.turn === id ? " 🎱" : ""}
+          </div>
+        );
+      })}
       <div className="pgroup">{group ? `${GROUP_LABEL[group]} · faltam ${remaining}` : "mesa aberta"}</div>
       <div className="pout">{out.map((b) => <BallDot key={b} id={b} small />)}</div>
     </div>
@@ -57,7 +65,8 @@ export function PoolHUD({ pool, ui, offsetRef, players, you, settings, onEnd, is
   }, [pool.message, pool.shotId]);
 
   const info = (id: string) => players.find((p) => p.id === id);
-  const [a, b] = pool.players;
+  const [teamA = [], teamB = []] = pool.teams;
+  const nicks = (ids: string[]) => ids.map((i) => info(i)?.nick ?? "?").join(" e ");
   const myTurn = pool.turn === you;
   const left = pool.turnEndsAt ? Math.max(0, Math.ceil((pool.turnEndsAt - now) / 1000)) : null;
   const iPlay = pool.players.includes(you);
@@ -73,11 +82,11 @@ export function PoolHUD({ pool, ui, offsetRef, players, you, settings, onEnd, is
   return (
     <>
       <div className="hud pool-top">
-        <PlayerCard state={pool} id={a} info={info(a)} active={pool.turn === a && pool.phase !== "finished"} />
+        <TeamCard state={pool} team={teamA} players={players} active={teamA.includes(pool.turn) && pool.phase !== "finished"} />
         <div className="pturn">
           {pool.phase === "finished" ? "Fim" : pool.phase === "shooting" ? "🎱" : left !== null ? `${left}s` : ""}
         </div>
-        <PlayerCard state={pool} id={b} info={info(b)} active={pool.turn === b && pool.phase !== "finished"} right />
+        <TeamCard state={pool} team={teamB} players={players} active={teamB.includes(pool.turn) && pool.phase !== "finished"} right />
       </div>
 
       {pool.phase !== "finished" && <div className={`hud pool-hint panel${myTurn && iPlay ? " mine" : ""}`}>{hint}</div>}
@@ -98,7 +107,7 @@ export function PoolHUD({ pool, ui, offsetRef, players, you, settings, onEnd, is
         <div className="overlay">
           <div className="panel winner">
             <div className="trophy">🏆</div>
-            <h2>{info(pool.winner)?.nick} venceu!</h2>
+            <h2>{nicks(pool.winners.length ? pool.winners : [pool.winner])} {pool.winners.length > 1 ? "venceram" : "venceu"}!</h2>
             <p className="muted">{END_TEXT[pool.endReason ?? ""] ?? pool.message}</p>
             <p className="muted">Voltando ao lobby em alguns segundos…</p>
             <button className="primary" onClick={onEnd}>Voltar ao lobby agora</button>

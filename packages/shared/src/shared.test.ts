@@ -132,30 +132,51 @@ describe("sanitizeHeight", () => {
 });
 
 import {
-  BOARD_LENGTH, BOARD_RULES, CHALLENGE_CONFIG, CHALLENGE_TILES, FINAL_TILE, PAD_COLORS,
-  clampTile, clicksSuccess, colorsCheck, cursorAt, isChallengeTile, pickColors, powerSuccess, shuffle, tilePath,
+  BOARD_RULES, BOARD_SIZES, CHALLENGE_CONFIG, PAD_COLORS, RED_TILE_BACK,
+  clampTile, clicksSuccess, colorsCheck, cursorAt, isBoardSize, isChallengeTile, isRedTile, makeBoardLayout, pickColors, powerSuccess, shortcutFrom, shuffle, tilePath,
 } from "./index";
 
 describe("tabuleiro", () => {
-  it("tem 40 casas e as casas de desafio são válidas", () => {
-    expect(BOARD_LENGTH).toBe(40);
-    for (const t of CHALLENGE_TILES) {
-      expect(t).toBeGreaterThan(0);
-      expect(t).toBeLessThan(FINAL_TILE);
-      expect(isChallengeTile(t)).toBe(true);
+  it.each(BOARD_SIZES)("o layout de %i casas é válido para várias sementes", (size) => {
+    for (let seed = 1; seed <= 200; seed++) {
+      const l = makeBoardLayout(size, seed);
+      expect(l.finalTile).toBe(size - 1);
+      const special = [...l.challengeTiles, ...l.redTiles, ...l.shortcuts.flatMap((s) => [s.from, s.to])];
+      expect(new Set(special).size).toBe(special.length); // nenhuma casa tem dois papéis
+      for (const t of special) { expect(t).toBeGreaterThan(0); expect(t).toBeLessThan(l.finalTile); }
+      expect(l.shortcuts.length).toBeGreaterThanOrEqual(2);
+      for (const sc of l.shortcuts) expect(sc.to - sc.from).toBeGreaterThanOrEqual(4);
+      expect(l.shortcuts.at(-1)!.to).toBe(l.finalTile - 3); // o maior atalho leva quase à linha de chegada
+      expect(l.redTiles.length).toBeGreaterThan(0);
+      expect(l.challengeTiles.length).toBeGreaterThan(size / 8);
+      for (const r of l.redTiles) {
+        expect(r - RED_TILE_BACK).toBeGreaterThanOrEqual(0);
+        expect(isRedTile(l, r - RED_TILE_BACK)).toBe(false);
+        expect(shortcutFrom(l, r - RED_TILE_BACK)).toBeUndefined();
+      }
     }
-    expect(isChallengeTile(0)).toBe(false);
-    expect(new Set(CHALLENGE_TILES).size).toBe(CHALLENGE_TILES.length);
+  });
+  it("o layout é determinístico", () => {
+    expect(makeBoardLayout(100, 7)).toEqual(makeBoardLayout(100, 7));
+    expect(makeBoardLayout(100, 7)).not.toEqual(makeBoardLayout(100, 8));
+  });
+  it("isChallengeTile e isBoardSize", () => {
+    const l = makeBoardLayout(40, 3);
+    expect(isChallengeTile(l, 0)).toBe(false);
+    expect(isChallengeTile(l, l.challengeTiles[0]!)).toBe(true);
+    expect(isBoardSize(40)).toBe(true);
+    expect(isBoardSize(41)).toBe(false);
   });
   it("regras configuráveis seguem o PRD", () => {
     expect(BOARD_RULES.successBonus).toBe(2);
     expect(BOARD_RULES.failAdvance).toBe(1);
     expect(BOARD_RULES.encounterLoserBack).toBe(1);
     expect(BOARD_RULES.encounterWinnerAdvance).toBe(2);
+    expect(RED_TILE_BACK).toBe(2);
   });
   it("clampTile e tilePath", () => {
-    expect(clampTile(100)).toBe(FINAL_TILE);
-    expect(clampTile(-4)).toBe(0);
+    expect(clampTile(100, 39)).toBe(39);
+    expect(clampTile(-4, 39)).toBe(0);
     expect(tilePath(2, 5)).toEqual([3, 4, 5]);
     expect(tilePath(5, 2)).toEqual([4, 3, 2]);
     expect(tilePath(3, 3)).toEqual([]);

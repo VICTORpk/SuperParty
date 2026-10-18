@@ -16,4 +16,13 @@ updateEnv();
 window.addEventListener("resize", updateEnv);
 window.addEventListener("orientationchange", updateEnv);
 
-createRoot(document.getElementById("root")!).render(<App />);
+const root = createRoot(document.getElementById("root")!);
+
+// Modo Dev: o editor só existe no servidor de desenvolvimento. Em `vite build` o valor de `import.meta.env.DEV` é
+// falso, o bloco inteiro (e o módulo do editor, carregado por import dinâmico) é descartado do pacote final e a rota
+// /dev cai no jogo normal. `VITE_DEV_MODE=0` desliga o editor mesmo no desenvolvimento.
+if (import.meta.env.DEV && import.meta.env.VITE_DEV_MODE !== "0" && location.pathname.startsWith("/dev")) {
+  void import("./dev/DevApp").then(({ default: DevApp }) => root.render(<DevApp />));
+} else {
+  root.render(<App />);
+}

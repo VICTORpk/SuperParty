@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import {
-  BOARD_RULES, CHALLENGE_CONFIG, FINAL_TILE, PAD_COLORS, cursorAt,
+  BOARD_RULES, CHALLENGE_CONFIG, PAD_COLORS, RED_TILE_BACK, cursorAt,
   type BoardPublicState, type ChallengeInput, type ChallengePublic, type PlayerInfo,
 } from "@jogo/shared";
 
@@ -73,11 +73,12 @@ export function BoardHUD({ state, players, you, isHost, offsetRef, roll, onRoll,
             <li key={id} className={id === state.turn ? "turn" : ""}>
               <span className="dot" style={{ background: color(id) }} />
               <span className="rname">{nick(id)}{id === you ? " (você)" : ""}</span>
-              <span className="rpos">{state.positions[id]}/{FINAL_TILE}</span>
-              <div className="rbar"><div style={{ width: `${((state.positions[id] ?? 0) / FINAL_TILE) * 100}%`, background: color(id) }} /></div>
+              <span className="rpos">{state.positions[id]}/{(state.size - 1)}</span>
+              <div className="rbar"><div style={{ width: `${((state.positions[id] ?? 0) / (state.size - 1)) * 100}%`, background: color(id) }} /></div>
             </li>
           ))}
         </ol>
+        <p className="muted legend">🟥 casa vermelha: volta {RED_TILE_BACK} · ⚡ atalho: pula adiante · ❗ desafio</p>
       </div>
 
       {state.phase !== "finished" && (

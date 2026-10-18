@@ -1,13 +1,13 @@
 # Contexto do projeto (para retomar o trabalho)
 
-Última atualização: 2026-10-17 · PRD na versão 1.12 (`PRD.md`) · Idioma da conversa e da interface: português (Brasil).
+Última atualização: 2026-10-17 (fim da sessão do Modo Dev) · PRD na versão 1.12 (`PRD.md`) · Idioma da conversa e da interface: português (Brasil).
 
 ## O que é
 Jogo social multiplayer 3D no navegador, salas privadas por código (até 10 jogadores), lobby 3D, chat, tabuleiro com arena de combate, sinuca clássica e sinuca Impostor. Restrição do dono: **só ferramentas/serviços gratuitos**; trabalha sozinho.
 
 ## Arquitetura (decidida)
 - Monorepo npm workspaces: `apps/web` (Vite + React + React Three Fiber), `apps/server` (Colyseus 0.16, servidor autoritativo, sem banco), `packages/shared` (regras puras, tipos, protocolo).
-- Hospedagem prevista: front no Cloudflare Pages, servidor no Render free (ou Oracle Always Free se o cold start incomodar). Ainda **não publicado**.
+- Hospedagem: front na **Vercel**, servidor no **Render free** (`render.yaml`, runtime Node, não Docker). A Vercel precisa de `VITE_SERVER_URL=wss://superparty-server.onrender.com` (sem ela o celular diz "servidor não respondeu"). Brave Shields/adblock bloqueia `/health` (ERR_BLOCKED_BY_CLIENT); `wakeServer` ainda não tolera isso.
 - Sem login: apelido + cor; token de reconexão em `sessionStorage`.
 
 ## Como rodar
@@ -60,3 +60,14 @@ Salas, chat, lobby 3D (ilha low poly, colisões, lago com ponte), personagem est
 2. Testar no celular de verdade e ajustar controles/desempenho.
 3. Definir itens do inventário (hoje 4 slots vazios) e se a arena usa itens/armas.
 4. Opcionais: spin e sons na sinuca, versão noturna da cabana, estrelas/moedas no tabuleiro (mudaria regras: perguntar antes).
+
+## Modo Dev (adicionado em 2026-10-17)
+Editor de mapas/ilhas/minigolfe + bots de teste, só em desenvolvimento. Ver `docs/MODO-DEV.md`. Código: `packages/shared/src/maps/` (formato, encaixe, ops, golfe), `packages/shared/src/botBrain.ts`, `packages/shared/src/lobbyWorld.ts` (geometria do lobby agora compartilhada com o servidor), `apps/web/src/dev/` (editor), `apps/web/devMapsPlugin.ts` (arquivos em `maps/`), `apps/server/src/dev.ts`. `npm run dev:server` agora define `DEV_MODE=1`.
+
+### Estado ao fim da sessão do Modo Dev (2026-10-17)
+- Sinuca clássica: 2 a 4 jogadores (equipes 1×1, 1×2, 2×2); Impostor: 4 a 10. Mesa com visual low poly (feltro verde, madeira clara, pés laranja).
+- Tabuleiro: jogadores votam o tamanho (40, 70, 100 ou 150 casas); `makeBoardLayout(length, seed)` em `packages/shared/src/board.ts` gera atalhos até a chegada e casas vermelhas (voltam 2). Pedras do lobby removidas.
+- Verificação final: typecheck limpo, 163 testes (10 arquivos), smokes e `dev-bots-smoke.ts` OK. **Nada commitado nem publicado** (git com todas as mudanças locais; falta commit/push para atualizar Render/Vercel).
+- Limitações: mapas do editor ainda não alimentam o tabuleiro/lobby multiplayer; golfe sem placar por jogador; bots em partida jogam como "ausentes".
+- Imagem de referência do personagem (macacão laranja, blocky) recebida; visual **não** alterado — possível próxima tarefa.
+- Próximos passos: commit/push; tornar `wakeServer` tolerante a adblock; ligar mapas do editor ao multiplayer.
